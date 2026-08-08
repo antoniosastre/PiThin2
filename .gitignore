@@ -1,0 +1,15 @@
+# Nunca deben acabar en el repositorio: son secretos reales.
+tailscale-authkey.txt
+*.enc
+*.meta
+
+# Imágenes generadas en la Fase B
+*.img
+*.img.xz
+*.zip
+
+# Restos de edición
+*~
+*.bak
+*.swp
+.DS_Store

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# pithin-sesion - bucle de sesión RDP. Corre DENTRO de X, lo lanza
+# xinitrc.
+#
+# La contraseña no se pide aquí: whiptail necesita un terminal de texto
+# y dentro de X no hay ninguno. Se pide antes de arrancar X y llega por
+# un fichero en tmpfs que esta orden lee y destruye al instante.
+
+set -uo pipefail
+
+export PITHIN_LIB="${PITHIN_LIB:-/usr/local/lib/pithin}"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-config.sh"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-vpn.sh"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-rdp.sh"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-tui.sh"
+
+MOTIVO="/run/pithin/ultimo-motivo"
+
+anotar_motivo() {
+    install -d -m 0700 /run/pithin 2>/dev/null || true
+    printf '%s' "$1" >"$MOTIVO" 2>/dev/null || true
+}
+
+main() {
+    config_cargar || true
+
+    # La distribución del teclado dentro de X es independiente de la de
+    # la consola de texto.
+    setxkbmap "$TECLADO" 2>/dev/null || true
+
+    # Nada de salvapantallas ni apagado de la pantalla: esto es un
+    # terminal, no un ordenador de escritorio.
+    xset s off -dpms s noblank 2>/dev/null || true
+
+    local secreto
+    if ! secreto="$(tui_recoger_secreto)"; then
+        log_error "No se recibió la contraseña; se cierra la sesión gráfica."
+        anotar_motivo "No se pudo obtener la contraseña de Windows."
+        return 1
+    fi
+
+    local intentos=0 codigo
+    while true; do
+        codigo=0
+        rdp_conectar "$secreto" || codigo=$?
+        anotar_motivo "$RDP_ULTIMO_MOTIVO"
+
+        (( codigo == 0 )) && break
+
+        es_si "$RECONEXION_AUTOMATICA" || break
+
+        # Un fallo de credenciales o de sintaxis no se arregla
+        # reintentando: solo haría perder tiempo delante de una
+        # pantalla en negro.
+        if ! rdp_fallo_recuperable; then
+            log_info "El fallo necesita intervención; no se reintenta."
+            break
+        fi
+
+        intentos=$((intentos + 1))
+        if (( RECONEXION_MAX_INTENTOS > 0 && intentos >= RECONEXION_MAX_INTENTOS )); then
+            log_aviso "Agotados los $RECONEXION_MAX_INTENTOS reintentos."
+            anotar_motivo "$RDP_ULTIMO_MOTIVO
+
+Se reintentó $intentos veces sin conseguirlo."
+            break
+        fi
+
+        log_info "Reintento $intentos en ${RECONEXION_ESPERA}s..."
+        sleep "$RECONEXION_ESPERA"
+    done
+
+    unset secreto
+    return 0
+}
+
+main "$@"

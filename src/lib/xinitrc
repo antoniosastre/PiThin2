@@ -1,0 +1,15 @@
+#!/bin/sh
+# xinitrc de PiThin.
+#
+# Sesión de X sin gestor de ventanas ni escritorio: solo el cliente
+# RDP a pantalla completa. Cuando pithin-sesion termina, X se cierra y
+# el control vuelve al menú de la consola de texto.
+
+# Un fondo que no sea negro puro: si algo va mal, se distingue una
+# pantalla en blanco de un equipo apagado.
+xsetroot -solid "#0f1419" 2>/dev/null || true
+
+# El puntero del ratón por defecto, en vez de la X de los años noventa.
+xsetroot -cursor_name left_ptr 2>/dev/null || true
+
+exec /usr/local/bin/pithin-sesion

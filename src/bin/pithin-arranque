@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# pithin-arranque - orquestador que corre al encender el equipo.
+#
+# Lo lanza el inicio de sesión automático en tty1. Encadena las tres
+# cosas que tienen que salir bien para llegar al escritorio remoto —
+# red, túnel y sesión — y deja al usuario en el menú si alguna falla.
+
+set -uo pipefail
+
+export PITHIN_LIB="${PITHIN_LIB:-/usr/local/lib/pithin}"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-menus.sh"
+
+# ---------------------------------------------------------------------
+
+banner() {
+    clear
+    cat <<'FIN'
+
+    ██████  ██ ████████ ██   ██ ██ ███    ██
+    ██   ██ ██    ██    ██   ██ ██ ████   ██
+    ██████  ██    ██    ███████ ██ ██ ██  ██
+    ██      ██    ██    ██   ██ ██ ██  ██ ██
+    ██      ██    ██    ██   ██ ██ ██   ████
+
+    Cliente ligero de escritorio remoto
+
+FIN
+}
+
+paso() { printf '    %s\n' "$*"; }
+
+# ---------------------------------------------------------------------
+
+main() {
+    preparar_directorios
+    banner
+
+    paso "Leyendo la configuración..."
+    config_cargar || paso "  (no se encontró pithin.conf; se usan valores por defecto)"
+
+    # --- Red ----------------------------------------------------------
+    paso "Buscando redes conocidas..."
+    wifi_importar_redes >/dev/null 2>&1 || true
+
+    if ! wifi_esperar_conexion "$ESPERA_WIFI"; then
+        paso "No hay ninguna red conocida al alcance."
+        asistente_wifi_necesario || true
+    fi
+
+    if wifi_conectado; then
+        paso "Conectado a $(wifi_ssid_actual)"
+    fi
+
+    # --- Túnel --------------------------------------------------------
+    if vpn_disponible && wifi_conectado; then
+        paso "Levantando el túnel Tailscale..."
+        vpn_arrancar || true
+        if vpn_esperar "$ESPERA_TAILSCALE"; then
+            paso "Túnel activo ($(vpn_ip_propia))"
+        else
+            paso "Tailscale no llegó a activarse (estado: $(vpn_estado))"
+        fi
+    elif ! vpn_disponible; then
+        paso "Tailscale no está instalado."
+    fi
+
+    # --- Sesión -------------------------------------------------------
+    if es_si "$AUTOCONECTAR" && config_completa && wifi_conectado; then
+        lanzar_sesion || true
+    elif ! config_completa; then
+        tui_mensaje "Falta configuración" \
+"Todavía no se ha indicado a qué PC hay que conectarse.
+
+Puedes rellenarlo desde Ajustes, o editar este fichero metiendo la tarjeta en cualquier ordenador:
+
+  $PITHIN_CONF" 15 74
+    fi
+
+    # Al salir de la sesión siempre se cae aquí. menu_principal no
+    # termina salvo que se apague o se reinicie el equipo.
+    menu_principal
+}
+
+main "$@"

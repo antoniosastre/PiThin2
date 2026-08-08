@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# pithin-menu - abre el menú de PiThin sin pasar por el arranque.
+#
+# Útil desde una consola o por SSH cuando hay que cambiar algo sin
+# reiniciar el equipo.
+
+set -uo pipefail
+
+export PITHIN_LIB="${PITHIN_LIB:-/usr/local/lib/pithin}"
+# shellcheck source=/dev/null
+source "$PITHIN_LIB/pithin-menus.sh"
+
+preparar_directorios
+config_cargar || true
+menu_principal

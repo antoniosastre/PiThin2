@@ -1,0 +1,84 @@
+=====================================================================
+  PiThin - configuracion
+=====================================================================
+
+Estas en la particion de arranque de la Raspberry. Puedes editar estos
+ficheros desde cualquier ordenador, con el Bloc de notas o similar.
+
+  pithin.conf   A que PC conectarse, resolucion, teclado y demas
+  redes.conf    Tus redes WiFi conocidas
+
+Guarda los cambios, expulsa la tarjeta con cuidado, metela en la
+Raspberry y enciende.
+
+
+COMO EDITARLO SIN ROMPER NADA
+---------------------------------------------------------------------
+
+  - Las lineas que empiezan por # son comentarios y no hacen nada.
+  - No pongas espacios alrededor del signo igual: RDP_HOST="mi-pc"
+  - Si te equivocas en algo, PiThin lo avisa y sigue con el valor por
+    defecto. No se queda colgado.
+
+
+LO MINIMO PARA QUE FUNCIONE
+---------------------------------------------------------------------
+
+En pithin.conf:
+
+  RDP_HOST   Nombre de tu PC en Tailscale, o su IP 100.x.y.z
+             Lo ves en https://login.tailscale.com/admin/machines
+
+  RDP_USER   Tu usuario de Windows.
+             Cuenta local:      Antonio
+             Cuenta Microsoft:  MicrosoftAccount\\tu@correo.com
+             (si, con dos barras invertidas)
+
+En redes.conf, al menos una red:
+
+  [NombreDeMiWiFi]
+  clave = miContrasena
+  prioridad = 100
+
+
+SI VA LENTO
+---------------------------------------------------------------------
+
+Cambia en pithin.conf:
+
+  RESOLUCION="1280x720"
+
+Es lo que mas se nota. La imagen se escala para seguir llenando la
+pantalla, asi que no veras bordes negros.
+
+
+TAILSCALE
+---------------------------------------------------------------------
+
+La primera vez hace falta una auth key. Crea aqui un fichero llamado
+
+  tailscale-authkey.txt
+
+con la clave dentro (empieza por tskey-auth-). Se usa en el primer
+arranque y el fichero se borra solo.
+
+IMPORTANTE: genera la clave CON ETIQUETA (tag) en el panel de
+Tailscale. Sin etiqueta caduca a los 180 dias y la Raspberry se queda
+sin acceso justo cuando la necesites.
+
+
+AVISO
+---------------------------------------------------------------------
+
+Las contrasenas WiFi de redes.conf estan en texto plano: esta particion
+la lee cualquiera que meta la tarjeta en un ordenador. No se puede
+evitar, es FAT32.
+
+La contrasena de Windows NO esta aqui: va cifrada en la otra particion,
+protegida por PIN y por el numero de serie de esta Raspberry.
+
+
+MAS INFORMACION
+---------------------------------------------------------------------
+
+  https://github.com/antoniosastre/PiThin2

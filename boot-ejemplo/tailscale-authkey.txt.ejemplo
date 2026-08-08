@@ -1,0 +1,34 @@
+# Auth key de Tailscale para el primer arranque.
+#
+# INSTRUCCIONES
+#
+#   1. Renombra este fichero a:  tailscale-authkey.txt
+#   2. Sustituye la línea de ejemplo por tu clave real.
+#   3. Guarda y arranca la Raspberry.
+#
+# La clave se usa una sola vez: PiThin la copia a un sitio privado del
+# sistema y BORRA este fichero de la tarjeta. Esta partición la lee
+# cualquiera que la meta en un ordenador, así que no debe quedarse aquí.
+#
+#
+# CÓMO GENERARLA
+#
+#   https://login.tailscale.com/admin/settings/keys  ->  Generate auth key
+#
+#   - Reusable ....... desactivado (se usa una vez y ya está)
+#   - Pre-approved ... marcado, si tienes aprobación de dispositivos
+#   - Tags ........... tag:pithin      <-- ESTO IMPORTA
+#
+# La etiqueta no es opcional en la práctica: los nodos etiquetados
+# tienen desactivada la caducidad de clave. Sin ella, a los 180 días la
+# Raspberry se sale del tailnet sin previo aviso, y descubrirlo en un
+# hotel no tiene gracia.
+#
+# El procedimiento completo, incluida la regla ACL para que esta
+# Raspberry solo pueda alcanzar el puerto 3389 de tu PC y nada más,
+# está en docs/windows.md
+#
+#
+# Sustituye esta línea por tu clave:
+
+tskey-auth-PON-AQUI-TU-CLAVE-REAL
