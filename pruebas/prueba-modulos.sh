@@ -56,8 +56,11 @@ comprobar_ok() {
         PASADAS=$((PASADAS + 1))
         printf '  \033[32m✓\033[0m %s\n' "$descripcion"
     else
+        # $? hay que capturarlo ANTES del incremento de FALLIDAS, o siempre
+        # se imprimiría "devolvió 0" (el código de la asignación aritmética).
+        local rc=$?
         FALLIDAS=$((FALLIDAS + 1))
-        printf '  \033[31m✗\033[0m %s (devolvió %s)\n' "$descripcion" "$?"
+        printf '  \033[31m✗\033[0m %s (devolvió %s)\n' "$descripcion" "$rc"
     fi
 }
 
@@ -279,13 +282,59 @@ _wifi_recorrer_fichero "$PITHIN_REDES" _recoger
 comprobar "no duplica una red que ya estaba" "2" "$(wc -l <"$RECOGIDAS")"
 
 # ---------------------------------------------------------------------
+#  4b. Escaneo WiFi: los SSID no deben corromperse
+# ---------------------------------------------------------------------
+# nmcli -t escapa los ':' del SSID como '\:'; el pipeline los pasa a byte
+# 0x01 y los restaura. La restauración DEBE hacerse con 'tr \001' (octal):
+# con '\x01' (que tr no entiende) se traducirían las letras x, 0 y 1 a ':',
+# corrompiendo SSID tan comunes como 'MOVISTAR_0123' o 'MiFibra-A1B2'.
+
+titulo "Escaneo WiFi (SSID intactos)"
+
+# Dobles: nmcli con salida fija en el formato -t, y sleep sin espera.
+nmcli() {
+    case "$*" in
+        *"-f DEVICE,TYPE"*)  printf 'wlan0:wifi\n' ;;
+        *"-f DEVICE,STATE"*) printf 'wlan0:connected\n' ;;
+        *"-f ACTIVE,SSID"*)  printf 'yes:MiFibra-A1B2\n' ;;
+        *"-f SSID,SIGNAL,SECURITY"*)
+            printf 'MOVISTAR_0123:80:WPA2\n'
+            printf 'Cafe\\: del Puerto:60:--\n'   # ':' real dentro del SSID
+            printf 'boxnet:44:WPA2\n' ;;
+        *rescan*) return 0 ;;
+        *) return 0 ;;
+    esac
+}
+sleep() { :; }
+
+ESCANEO="$BANCO/escaneo.txt"
+wifi_escanear >"$ESCANEO" 2>/dev/null
+
+comprobar "no corrompe un SSID con dígitos (0/1)" "MOVISTAR_0123" \
+    "$(awk -F'\t' 'NR==1{print $1}' "$ESCANEO")"
+comprobar "conserva intacta la señal" "80" \
+    "$(awk -F'\t' 'NR==1{print $2}' "$ESCANEO")"
+comprobar "restaura los ':' escapados del SSID" "Cafe: del Puerto" \
+    "$(awk -F'\t' '$1 ~ /^Cafe/{print $1}' "$ESCANEO")"
+comprobar "wifi_ssid_actual no corrompe el nombre" "MiFibra-A1B2" \
+    "$(wifi_ssid_actual)"
+
+unset -f nmcli sleep
+
+# ---------------------------------------------------------------------
 #  5. Cifrado de la credencial
 # ---------------------------------------------------------------------
 
 titulo "Credencial cifrada con PIN"
 
 if ! cred_dependencias_ok 2>/dev/null; then
-    printf '  \033[33m!\033[0m argon2 u openssl no están; se omite este bloque\n'
+    # No se saltan en silencio: si faltan argon2/openssl, el ciclo de cifrado
+    # —lo que de verdad protege la contraseña— queda SIN verificar, y decir
+    # "todo correcto" sería mentir. argon2 y openssl son dependencias del
+    # aparato (las instala install.sh), así que en un entorno de pruebas serio
+    # deben estar. Cuenta como fallo para que no pase desapercibido.
+    FALLIDAS=$((FALLIDAS + 1))
+    printf '  \033[31m✗\033[0m argon2/openssl ausentes: el ciclo de cifrado NO se ha verificado\n'
 else
     SECRETO='C0ntraseña con espacios, acentos y $ímbolo$ "raros"'
 

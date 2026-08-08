@@ -89,9 +89,19 @@ main() {
         paso "Tailscale no está instalado."
     fi
 
-    # --- Aviso de cambios pendientes ----------------------------------
+    # --- Salida de pantalla -------------------------------------------
+    # Si SALIDA_HDMI se editó a mano en la tarjeta, cmdline.txt todavía no lo
+    # refleja: solo el menú lo reescribía. Lo aplicamos aquí para que el
+    # ajuste editado desde otro ordenador (el flujo que promociona el README)
+    # sirva de verdad. El modo nuevo entra en el PRÓXIMO arranque, porque el
+    # kernel ya arrancó con el cmdline anterior; una vez escrito, deseado y
+    # actual coinciden y este bloque no vuelve a tocarlo.
     if pantalla_requiere_reinicio 2>/dev/null; then
-        paso "Hay un cambio de salida de pantalla pendiente de reiniciar."
+        if pantalla_sincronizar >/dev/null 2>&1; then
+            paso "Salida de pantalla actualizada; el cambio se verá al reiniciar."
+        else
+            paso "No se pudo aplicar el modo de salida (¿el monitor no lo admite o la tarjeta es de solo lectura?)."
+        fi
     fi
 
     # --- Sesión -------------------------------------------------------

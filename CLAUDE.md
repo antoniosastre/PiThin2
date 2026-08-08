@@ -34,7 +34,7 @@ en un contenedor x86 con entornos simulados.
 ## Cómo trabajar aquí
 
 ```bash
-./pruebas/todas.sh          # 135 pruebas + shellcheck. Sin root, sin Raspberry
+./pruebas/todas.sh          # 142 pruebas + shellcheck. Sin root, sin Raspberry
 sudo ./install.sh           # instalación completa
 sudo ./install.sh --solo-ficheros   # recarga scripts en segundos: para iterar
 sudo ./install.sh --desinstalar
@@ -374,7 +374,7 @@ El instalador avisa si cae a esa versión.
 
 ## Qué NO está verificado
 
-Que quede claro, porque es fácil leer "135 pruebas en verde" y confiarse.
+Que quede claro, porque es fácil leer "142 pruebas en verde" y confiarse.
 
 **Verificado** (en contenedor x86, con entornos simulados): análisis de
 los dos ficheros de configuración incluidos CRLF y símbolos raros; ciclo

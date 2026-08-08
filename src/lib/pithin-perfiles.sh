@@ -252,16 +252,25 @@ perfil_bueno_descripcion() {
 perfil_restaurar_bueno() {
     perfil_hay_bueno || { log_error "No hay ninguna configuración buena guardada."; return 1; }
 
-    local clave valor
+    local clave valor fallos=0
     while IFS='=' read -r clave valor; do
         case "$clave" in
             BACKEND|RESOLUCION|SALIDA_HDMI|CODEC|PROFUNDIDAD_COLOR|PERFIL)
-                config_guardar_ajuste "$clave" "$valor" >/dev/null 2>&1 || true
+                config_guardar_ajuste "$clave" "$valor" >/dev/null 2>&1 || fallos=1
                 ;;
         esac
     done <"$PERFIL_BUENO"
 
     config_validar
+
+    # No tragarse el fallo: si la tarjeta está de solo lectura,
+    # config_guardar_ajuste no toca ni disco ni memoria, así que no se ha
+    # restaurado nada. Quien llama debe saberlo para no prometer lo contrario.
+    if (( fallos )); then
+        log_error "No se pudo escribir la configuración restaurada en la tarjeta."
+        return 1
+    fi
+
     log_info "Restaurada la última configuración que funcionaba."
     return 0
 }

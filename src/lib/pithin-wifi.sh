@@ -39,7 +39,7 @@ wifi_ssid_actual() {
     nmcli -t -f ACTIVE,SSID device wifi list --rescan no 2>/dev/null \
         | sed 's/\\:/\x01/g' \
         | awk -F: '$1=="yes" {print $2; exit}' \
-        | tr '\x01' ':'
+        | tr '\001' ':'
 }
 
 # Espera hasta que haya conexión o se agote el tiempo.
@@ -77,7 +77,10 @@ _wifi_recorrer_fichero() {
     }
 
     while IFS= read -r linea || [[ -n "$linea" ]]; do
-        limpia="$(recortar "${linea%$'\r'}")"
+        # Quita el BOM UTF-8 que puede meter el Bloc de notas en la 1ª línea,
+        # además del retorno de carro de Windows.
+        limpia="${linea#$'\xef\xbb\xbf'}"
+        limpia="$(recortar "${limpia%$'\r'}")"
         [[ -z "$limpia" || "$limpia" == \#* || "$limpia" == \;* ]] && continue
 
         if [[ "$limpia" =~ ^\[(.+)\]$ ]]; then
@@ -183,10 +186,15 @@ wifi_escanear() {
     local dev; dev="$(wifi_interfaz)"
     nmcli device wifi rescan ifname "$dev" >/dev/null 2>&1 || true
     sleep 2
+    # nmcli -t escapa los ':' de dentro del SSID como '\:'. Los pasamos a
+    # byte 0x01 para poder trocear por ':' con awk sin romper esos SSID, y
+    # luego los restauramos. OJO: 'tr' NO entiende \xNN (hex); hay que dar
+    # el byte en OCTAL ('\001'). Con '\x01' tr traduciría las letras x,0,1
+    # literales, corrompiendo cualquier SSID que las contenga.
     nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname "$dev" --rescan no 2>/dev/null \
         | sed 's/\\:/\x01/g' \
         | awk -F: 'NF>=3 && $1!="" {print $1 "\t" $2 "\t" $3}' \
-        | tr '\x01' ':' \
+        | tr '\001' ':' \
         | sort -t$'\t' -k2 -rn \
         | awk -F'\t' '!vista[$1]++'
 }

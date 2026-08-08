@@ -251,10 +251,23 @@ _aplicar_perfil_interactivo() {
         return 0
     fi
 
+    # Un perfil con salida 'sesion' fuerza la resolución de sesión en la
+    # pantalla; si el monitor no la anuncia, forzarla dejaría la pantalla en
+    # negro. Se comprueba antes de escribir nada para no dejar pithin.conf y
+    # cmdline.txt descuadrados de forma permanente.
+    if [[ "$(perfil_salida "$nombre")" == "sesion" ]] \
+       && ! pantalla_admite "$(perfil_resolucion "$nombre")"; then
+        tui_error "El perfil «$(perfil_titulo "$nombre")» fija la salida a $(perfil_resolucion "$nombre"), un modo que tu monitor no anuncia.
+
+No se aplica, para no dejarte sin imagen. Mira los modos admitidos en Pantalla."
+        return 0
+    fi
+
     if ! perfil_aplicar "$nombre"; then
         tui_error "No se pudo guardar el perfil en la tarjeta.
 
-Se usará en esta sesión, pero se perderá al reiniciar."
+¿Está protegida contra escritura? El cambio no se ha aplicado."
+        return 0
     fi
 
     # El modo de salida HDMI se fija en cmdline.txt, así que necesita
@@ -468,7 +481,22 @@ Es el ajuste que más influye en la fluidez." 19 78 4 \
         "1024x768"  "Mínimo. Solo si todo lo demás va mal")" || return 0
     [[ -n "$eleccion" ]] || return 0
 
-    config_guardar_ajuste RESOLUCION "$eleccion" && config_validar
+    # Con la salida atada a la resolución de sesión, esa resolución tiene que
+    # ser una que el monitor admita; si no, al sincronizar cmdline.txt se
+    # quedaría un estado imposible (config pide 'sesion' a un modo que no
+    # existe). Se comprueba antes de guardar.
+    if [[ "$SALIDA_HDMI" == "sesion" ]] && ! pantalla_admite "$eleccion"; then
+        tui_error "Tu monitor no anuncia el modo $eleccion, y con la salida en «sesion» habría que forzarlo (pantalla en negro).
+
+Cambia antes la salida a «nativa», o elige una resolución que el monitor admita."
+        return 0
+    fi
+
+    if ! config_guardar_ajuste RESOLUCION "$eleccion"; then
+        tui_error "No se pudo guardar. ¿Está la tarjeta protegida contra escritura?"
+        return 0
+    fi
+    config_validar
     perfil_resincronizar
 
     # Si la salida estaba atada a la resolución de sesión, hay que
@@ -487,8 +515,12 @@ Por eso 'progressive' suele ir mejor que 'avc420' aunque comprima peor." 18 78 4
         "avc420"      "H.264. Comprime mejor pero exige mucha más CPU" \
         "auto"        "Que lo negocien Windows y FreeRDP")" || return 0
     [[ -n "$eleccion" ]] || return 0
-    config_guardar_ajuste CODEC "$eleccion" && config_validar
-    perfil_resincronizar
+    if config_guardar_ajuste CODEC "$eleccion"; then
+        config_validar
+        perfil_resincronizar
+    else
+        tui_error "No se pudo guardar. ¿Está la tarjeta protegida contra escritura?"
+    fi
 }
 
 _ajustar_color() {
@@ -498,8 +530,12 @@ _ajustar_color() {
         "32" "Color completo. Recomendado" \
         "16" "Ahorra ancho de banda")" || return 0
     [[ -n "$eleccion" ]] || return 0
-    config_guardar_ajuste PROFUNDIDAD_COLOR "$eleccion" && config_validar
-    perfil_resincronizar
+    if config_guardar_ajuste PROFUNDIDAD_COLOR "$eleccion"; then
+        config_validar
+        perfil_resincronizar
+    else
+        tui_error "No se pudo guardar. ¿Está la tarjeta protegida contra escritura?"
+    fi
 }
 
 _ajustar_teclado() {
@@ -511,7 +547,13 @@ _ajustar_teclado() {
         "uk"    "Inglés (Reino Unido)" \
         "pt"    "Portugués")" || return 0
     [[ -n "$eleccion" ]] || return 0
-    config_guardar_ajuste TECLADO "$eleccion" && config_validar
+    if config_guardar_ajuste TECLADO "$eleccion"; then
+        config_validar
+    else
+        tui_error "No se pudo guardar. ¿Está la tarjeta protegida contra escritura?"
+    fi
+    # El keymap de la consola se cambia igual, aunque no se pudiera guardar:
+    # así el teclado responde ya en esta sesión.
     loadkeys "$eleccion" >/dev/null 2>&1 || true
 }
 
@@ -540,7 +582,11 @@ Vuelve a ejecutar el instalador para añadirlo."
         return 0
     fi
 
-    config_guardar_ajuste BACKEND "$eleccion" && config_validar
+    if ! config_guardar_ajuste BACKEND "$eleccion"; then
+        tui_error "No se pudo guardar. ¿Está la tarjeta protegida contra escritura?"
+        return 0
+    fi
+    config_validar
     perfil_resincronizar
 
     if [[ "$eleccion" != "auto" ]] && ! backend_validado "$eleccion"; then
@@ -726,7 +772,12 @@ _ver_fichero() {
 abrir_consola() {
     clear
     printf '\n  Consola de PiThin. Escribe "exit" para volver al menú.\n\n'
-    "${SHELL:-/bin/bash}" -l || true
+    # El shell de login relee /root/.bash_profile, que en tty1 relanzaría
+    # pithin-arranque -> menu_principal (que no retorna): en vez de una
+    # consola saldría otra vez el menú, y la consola de rescate —la
+    # escapatoria cuando no hay red— quedaría inservible. Esta marca le dice
+    # al perfil de arranque que NO auto-arranque en este shell.
+    PITHIN_NO_AUTOARRANQUE=1 "${SHELL:-/bin/bash}" -l || true
 }
 
 apagar_equipo() {
@@ -843,9 +894,14 @@ Estás usando una configuración que todavía no había funcionado nunca. La úl
   $(perfil_bueno_descripcion)
 
 ¿Quieres volver a ella?" 19 76 "Volver a la buena" "Seguir con esta"; then
-            perfil_restaurar_bueno
-            _sincronizar_pantalla_si_hace_falta
-            tui_mensaje "Restaurada" "Se ha vuelto a la configuración anterior." 9 60
+            if perfil_restaurar_bueno; then
+                _sincronizar_pantalla_si_hace_falta
+                tui_mensaje "Restaurada" "Se ha vuelto a la configuración anterior." 9 60
+            else
+                tui_error "No se pudo restaurar la configuración anterior.
+
+¿Está la tarjeta protegida contra escritura? Se sigue con la configuración actual."
+            fi
         fi
         return 0
     fi
@@ -951,20 +1007,38 @@ _restaurar_consola() {
 }
 
 _resolver_prueba_backend() {
-    local backend="$1"
+    local backend="$1" estado motivo
+    estado="$(cat "$ESTADO_ULTIMA_SESION" 2>/dev/null)"
+    motivo="$(cat "$MOTIVO_ULTIMA_SESION" 2>/dev/null)"
 
-    # Si el cliente ni siquiera llegó a arrancar, no tiene sentido
-    # preguntar por el teclado.
-    if [[ "$(cat "$ESTADO_ULTIMA_SESION" 2>/dev/null)" == "fallo" ]] \
-       && [[ -s "$MOTIVO_ULTIMA_SESION" ]] \
-       && grep -q "SDL no pudo" "$MOTIVO_ULTIMA_SESION" 2>/dev/null; then
+    # Fallo específico del vídeo (SDL no tomó la pantalla): se revierte sin
+    # preguntar, porque el problema es claramente el backend.
+    if [[ "$estado" == "fallo" && "$motivo" == *"SDL no pudo"* ]]; then
         backend_invalidar "$backend"
-        tui_error "$(cat "$MOTIVO_ULTIMA_SESION")"
+        tui_error "$motivo"
         rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
         _revertir_backend "$backend"
         return 0
     fi
 
+    # Fallo que NO tiene que ver con el vídeo (PC apagado, contraseña,
+    # Tailscale, argumentos): no es culpa del backend. Preguntar "¿se veía la
+    # imagen?" a quien no vio nada y tomar su "No" como que el backend está
+    # roto degradaría el aparato a x11 por una causa ajena. En su lugar se
+    # muestra la causa REAL (que antes se borraba sin enseñarse) y se deja el
+    # backend sin validar para reintentar cuando el problema esté resuelto.
+    if [[ "$estado" == "fallo" ]]; then
+        tui_error "La sesión de prueba no llegó a mostrarse, así que todavía no se sabe si «$backend» funciona:
+
+$motivo
+
+Cuando eso esté resuelto, al conectar se volverá a hacer la prueba."
+        rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
+        return 0
+    fi
+
+    # La sesión llegó a mostrarse (agotó el tiempo de prueba o se cerró
+    # limpiamente): ahora sí tiene sentido preguntar por el teclado.
     if tui_confirmar "¿Funcionaba?" \
 "¿Se veía la imagen y respondían el teclado y el ratón con '$backend'?" 12 70 "Sí, todo bien" "No"; then
         backend_marcar_validado "$backend"
@@ -992,11 +1066,13 @@ Vuelve a ejecutar el instalador."
         return 1
     fi
 
-    if perfil_hay_bueno && ! perfil_sin_validar; then
-        : # la configuración actual ya era buena; no hay nada que revertir
-    fi
+    if ! config_guardar_ajuste BACKEND "$alternativo"; then
+        tui_error "No se pudo guardar el cambio a «$alternativo» en la tarjeta.
 
-    config_guardar_ajuste BACKEND "$alternativo" && config_validar
+¿Está protegida contra escritura?"
+        return 1
+    fi
+    config_validar
     perfil_resincronizar
 
     tui_mensaje "Cambiado a '$alternativo'" \

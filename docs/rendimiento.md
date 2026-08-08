@@ -40,11 +40,22 @@ Y aquí la carga principal es descodificar vídeo por software, que es
 probablemente lo que más depende de NEON que existe. En arm64 no hay
 duda: **ASIMD/NEON es obligatorio en ARMv8-A**, siempre está.
 
+Un matiz que conviene no exagerar: FFmpeg y OpenH264 traen su NEON en
+ensamblador y lo activan por **detección de CPU en tiempo de ejecución**,
+así que la descodificación H.264 probablemente usaría NEON incluso en el
+OS de 32 bits. Donde la línea base ARMv6 sí muerde es en las *primitives*
+de FreeRDP (conversión de color y YUV→RGB del códec **progressive**, que
+es justo el que usamos), donde NEON es una opción de compilación que una
+build ARMv6 no activa. La conclusión (arm64) se sostiene —ISA más ancha,
+registros de sobra, asm aarch64—, pero la ventaja concreta depende del
+códec, y el `10-30%` de abajo es una horquilla orientativa, sin medir en
+esta placa.
+
 | | armhf (RPi OS) | arm64 |
 |---|---|---|
-| RAM extra en arranque | — | ~90 MB más |
+| RAM extra en arranque | — | ~30-90 MB más (estimado) |
 | SIMD garantizado | ❌ base ARMv6 | ✅ obligatorio |
-| Trabajo intensivo de CPU | referencia | 10-30% más rápido |
+| Trabajo intensivo de CPU | referencia | 10-30% más rápido (estimado) |
 
 **La decisión depende de la descodificación, no al revés.** Mientras sea
 por software, la CPU es el cuello de botella y gana arm64. Si algún día
@@ -231,13 +242,22 @@ tampoco un proyecto de investigación.
 ### Pero antes conviene preguntarse si hace falta
 
 **RDP con códec progressive tiene un coste proporcional a los píxeles que
-cambian.** Escritorio quieto ≈ coste cero. **H.264 descodifica fotogramas
-completos de forma continua.**
+cambian.** Escritorio quieto ≈ coste cero. El modo AVC/H.264 de RDP
+(EGFX) también es dirigido por cambios —si nada se mueve, el servidor no
+manda fotogramas—, así que la diferencia no es "continuo vs a demanda":
+es el **coste por actualización**. Cuando algo cambia, progressive envía
+y descodifica solo los *tiles* sucios, mientras que H.264 codifica y
+descodifica el fotograma que cubre esa superficie completa.
 
 Para escribir, navegar menús, Office, terminal y código —el caso de uso
-de este aparato— *progressive* a 720p con escalado por GPU probablemente
-rinda **mejor** que AVC420 con descodificación hardware. La aceleración
-gana claramente en vídeo y animación pesada, y no mucho más.
+de este aparato— *progressive* a 720p con escalado por GPU **debería**
+rendir bien, y probablemente mejor que AVC420 por software. Frente a
+AVC420 con descodificación *hardware* la comparación es menos clara: en
+scroll o arrastre de ventanas se ensucia la pantalla entera (el propio
+documento estima 5-15 fps ahí), y un decodificador hardware con DMABUF
+zero-copy también ganaría en ese caso. "Quizá no haga falta" es
+defendible; "rinde mejor siempre" iría más lejos de lo medido —y aquí
+todavía no hay nada medido.
 
 Escrito de otra forma: la descodificación por hardware resolvería un
 problema que este aparato quizá no tenga.

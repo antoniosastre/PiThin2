@@ -70,7 +70,9 @@ _vpn_recoger_authkey() {
     fi
 
     install -d -m 0700 "$PITHIN_VAR" 2>/dev/null || true
-    printf '%s\n' "$clave" >"$VPN_AUTHKEY_INTERNA"
+    # Sin salto final: la clave se pasará luego a tailscale con 'file:', y
+    # así lo que lee el fichero es exactamente la clave, sin sorpresas.
+    printf '%s' "$clave" >"$VPN_AUTHKEY_INTERNA"
     chmod 0600 "$VPN_AUTHKEY_INTERNA"
 
     printf '%s' "$clave"
@@ -124,7 +126,10 @@ vpn_arrancar() {
     local clave
     if clave="$(_vpn_recoger_authkey)" && [[ -n "$clave" ]]; then
         log_info "Autenticando con la auth key de la tarjeta..."
-        args+=(--authkey="$clave")
+        # Por fichero (0600), no en argv: /proc/PID/cmdline lo lee cualquier
+        # proceso. _vpn_recoger_authkey ya ha dejado la clave en la copia
+        # interna. Misma disciplina que con la contraseña RDP (/args-from).
+        args+=(--authkey="file:$VPN_AUTHKEY_INTERNA")
     else
         log_info "Sin auth key nueva; se intenta reutilizar la sesión guardada."
     fi
@@ -189,9 +194,19 @@ vpn_ip_de() {
 
 # ¿Responde el puerto RDP? Se usa /dev/tcp de bash para no depender de
 # netcat, que no viene instalado en la imagen Lite.
+#
+# host y puerto se pasan como parámetros POSICIONALES al bash interno, no
+# interpolados en la cadena: RDP_HOST viene del fichero de configuración
+# (editable en la FAT32) y meterlo en 'bash -c "...$host..."' sería una
+# inyección de órdenes como root. Con "$1"/"$2" el shell interno solo los
+# usa como destino de la redirección, nunca como código.
 vpn_puerto_abierto() {
     local host="$1" puerto="${2:-3389}" espera="${3:-5}"
-    timeout "$espera" bash -c "exec 3<>/dev/tcp/$host/$puerto" 2>/dev/null
+    # Las comillas simples son deliberadas: $1/$2 los expande el bash
+    # INTERNO (a partir de los argumentos posicionales), no este. Es justo
+    # lo que evita la inyección; por eso el SC2016 es un falso positivo.
+    # shellcheck disable=SC2016
+    timeout "$espera" bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' _ "$host" "$puerto" 2>/dev/null
 }
 
 # Lista los equipos visibles en el tailnet: nombre<TAB>IP<TAB>estado
