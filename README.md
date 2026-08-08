@@ -1,26 +1,84 @@
 # PiThin
 
-Cliente ligero de escritorio remoto para **Raspberry Pi Zero 2 W**.
+**Tu ordenador de casa, en el bolsillo.**
 
-Enchufas la Raspberry a cualquier pantalla HDMI, con un teclado y un
-ratón. Arranca, se conecta a una WiFi conocida, levanta un túnel
-Tailscale y abre a pantalla completa la sesión de tu PC con Windows 11.
-Sin escritorio, sin gestor de ventanas, sin nada más.
+PiThin convierte una **Raspberry Pi Zero 2 W** —unos 20 euros, del
+tamaño de una tarjeta de crédito— en un cliente ligero de escritorio
+remoto dedicado.
 
-Si no encuentra ninguna red conocida, muestra un asistente de texto para
-conectarse a una nueva y la guarda para la próxima vez.
+## El problema que resuelve
 
-## Estado
+Estás fuera de casa y necesitas tu ordenador: tus programas, tus
+ficheros, tus licencias, tu sesión tal como la dejaste. Llevar el
+portátil no siempre compensa, y los ordenadores prestados no tienen lo
+tuyo.
 
-**Fase A.5: aprovisionamiento sobre Raspberry Pi OS Lite**, con perfiles
-conmutables y sin servidor X. Funciona instalando sobre un sistema
-estándar. La Fase B empaquetará estos mismos scripts como imagen
-`.img.xz` flasheable mediante pi-gen y GitHub Actions.
+Con PiThin te llevas una Raspberry en el bolsillo. La enchufas a
+cualquier pantalla con HDMI —un monitor de oficina, la tele de un hotel,
+la pantalla de una sala de reuniones— le conectas un teclado y un ratón,
+y estás delante de tu PC.
 
-- Los límites del hardware y el porqué de este orden:
-  [docs/viabilidad.md](docs/viabilidad.md)
-- Arquitectura, sistema de vídeo, escalado y aceleración por hardware:
-  [docs/rendimiento.md](docs/rendimiento.md)
+## Qué hace exactamente
+
+Al encenderla, sin que tengas que teclear nada más que el PIN:
+
+```
+Encendido
+  └─► Busca las redes WiFi que tienes guardadas en la tarjeta
+        ├─ Encuentra una  ─► se conecta
+        └─ No encuentra   ─► asistente en pantalla para elegir una nueva,
+                             y la guarda para la próxima vez
+  └─► Levanta un túnel cifrado (Tailscale / WireGuard) hasta tu PC
+  └─► Te pide el PIN que desbloquea tu contraseña de Windows
+  └─► Abre la sesión de tu PC a pantalla completa
+```
+
+Sin escritorio, sin gestor de ventanas y —por defecto— **sin siquiera un
+servidor X**. Solo el cliente remoto, que es lo único que hace falta.
+
+## Para quién es
+
+- Quien tiene un PC potente en casa y quiere llegar a él desde
+  cualquier sitio sin cargar con un portátil.
+- Quien necesita un segundo puesto barato contra el mismo ordenador.
+- Quien quiere reutilizar un monitor viejo como terminal.
+
+**Para quién no es:** si vas a ver vídeo o jugar, este no es el aparato.
+Ver [Rendimiento](#rendimiento-y-perfiles).
+
+---
+
+> ### ⚠️ Estado: sin probar en hardware real
+>
+> El código está completo y con 135 pruebas automáticas en verde, pero
+> **todavía no se ha ejecutado en una Raspberry**. Todo lo verificado se
+> ha verificado en entornos simulados. Espera tener que ajustar cosas en
+> la primera puesta en marcha.
+
+## Estado del proyecto
+
+| Fase | Qué es | Estado |
+|---|---|---|
+| **A** | Aprovisionamiento sobre Raspberry Pi OS Lite | Hecha |
+| **A.5** | Perfiles conmutables, SDL/KMSDRM, control de salida | Hecha |
+| **B** | Imagen `.img.xz` flasheable (pi-gen + GitHub Actions) | Pendiente |
+
+Se hizo primero el script y no la imagen a propósito: lo difícil no es
+construir la imagen, sino que la sesión resulte usable con 512 MB de RAM
+y descodificación por software, y eso exige iterar en minutos y no en
+compilaciones de 40 minutos. Los mismos scripts se envolverán como fase
+de pi-gen.
+
+## Documentación
+
+| Documento | Para qué |
+|---|---|
+| [docs/instalacion.md](docs/instalacion.md) | Paso a paso, con resolución de problemas |
+| [docs/windows.md](docs/windows.md) | Preparar el PC: RDP, Tailscale, firewall, ACL |
+| [docs/rendimiento.md](docs/rendimiento.md) | Por qué arm64, por qué sin X, quién reescala |
+| [docs/seguridad.md](docs/seguridad.md) | Modelo de amenazas: qué protege y qué no |
+| [docs/viabilidad.md](docs/viabilidad.md) | Análisis previo y decisiones de diseño |
+| [CLAUDE.md](CLAUDE.md) | Notas de desarrollo: gotchas, errores resueltos, caminos descartados |
 
 ## Qué necesitas
 
@@ -137,15 +195,19 @@ cambiar el PIN, ver un diagnóstico o apagar.
 ## Estructura del repositorio
 
 ```
-install.sh              Instalador idempotente (Fase A)
+install.sh              Instalador idempotente
 boot-ejemplo/           Plantillas de configuración para la SD
 src/lib/                Módulos: config, perfiles, pantalla, cifrado,
                         wifi, vpn, rdp, interfaz
 src/bin/                Órdenes: pithin-arranque, pithin-sesion, pithin-menu
 pruebas/                Pruebas de los módulos, sin necesidad de Raspberry
-docs/                   Viabilidad, rendimiento, instalación, Windows,
-                        seguridad
+docs/                   Documentación
+CLAUDE.md               Notas de desarrollo
 ```
+
+Todo está escrito en **shell**, en castellano, sin dependencias fuera de
+lo que trae Raspberry Pi OS Lite más FreeRDP, Tailscale y `argon2`. La
+interfaz usa `whiptail`, que ya viene instalado.
 
 ## Pruebas
 
