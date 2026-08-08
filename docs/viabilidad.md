@@ -131,16 +131,86 @@ opcional en una fase posterior.
 | Capa | Elección | Motivo |
 |---|---|---|
 | Base | Raspberry Pi OS **Lite** | ~130 MB en reposo, sin escritorio |
-| Arquitectura | arm64 (armhf como plan B) | Mejor soporte de paquetes; 32 bits ahorra RAM si aprieta |
-| Gráficos | **X11**: `xserver-xorg-core` + `xinit`, sin WM ni display manager | En Zero 2 W, Raspberry Pi OS usa X11 igualmente; Wayland es el defecto solo en Pi 4/5 |
-| Cliente RDP | `freerdp3-x11` (`xfreerdp3`) | Estándar, disponible en repos |
+| Arquitectura | **arm64** | Es lo que garantiza NEON; ver la revisión de abajo |
+| Gráficos | **SDL3/KMSDRM**, sin servidor X | Ver la revisión de abajo |
+| Cliente RDP | `freerdp3-sdl`, con `freerdp3-x11` de respaldo | Conmutable desde el menú |
 | Red | NetworkManager + `nmcli` | Ya viene en la base |
 | Interfaz | **`whiptail`** | Ya instalado, cero dependencias nuevas |
 | Memoria | zram swap | Colchón para picos |
 
-No se necesita aceleración 3D. Queda pendiente **medir en hardware real** si
-sale más a cuenta el camino simple de framebuffer/`modesetting` que
-`vc4-kms-v3d`, ahorrando CMA y complejidad.
+> Las filas de arquitectura y gráficos cambiaron tras la revisión
+> posterior. La versión original de este documento elegía X11 y dejaba
+> armhf como plan B.
+
+---
+
+## Revisión posterior (Fase A.5)
+
+Tres preguntas obligaron a revisar el diseño antes de empaquetar la
+imagen. El análisis completo, con datos y fuentes, está en
+[rendimiento.md](rendimiento.md); aquí queda el resumen de lo que cambió.
+
+### armhf quedó descartado, y no por lo esperable
+
+Ahorra unos 90 MB de RAM, que en 512 MB es un 18%. Pero **Raspberry Pi
+OS de 32 bits se compila para ARMv6 + VFP2**, no para el ARMv7 + VFP3 del
+armhf de Debian, para seguir arrancando en la Pi 1. Eso deja **NEON fuera
+de la línea base**, justo en un aparato cuya carga principal es
+descodificar vídeo por software.
+
+En arm64, NEON es obligatorio. Mientras la descodificación sea por
+software, gana arm64 sin discusión. Si algún día hubiera decodificación
+por hardware, la balanza se invertiría.
+
+### Fuera el servidor X
+
+`freerdp3-sdl` habla con el controlador de pantalla del kernel a través
+de SDL3/KMSDRM, sin Xorg. Ahorra 40-60 MB y una pieza móvil entera.
+
+Matiz importante: `freerdp3-sdl` no depende de X11, pero **`libsdl3-0`
+sí**. Las bibliotecas se instalan igualmente; lo que desaparece es el
+*servidor*, que es donde estaba el coste de verdad.
+
+Como el fallo típico de KMSDRM es que la imagen aparezca y el teclado no
+responda —y de eso no se sale desde dentro de la sesión— el cliente X11
+se mantiene instalado como respaldo, y la primera sesión con un backend
+nuevo se abre con tiempo limitado.
+
+### Un error de diseño corregido
+
+La primera versión añadía `/smart-sizing` siempre que la resolución de
+sesión no coincidía con la de la pantalla. **`/smart-sizing` escala por
+software**: en el aparato con menos CPU del catálogo, eso metía un
+reescalado de 2,25× por fotograma en el procesador, comiéndose buena
+parte del ahorro que justificaba bajar a 720p.
+
+Ahora solo se escala cuando hace falta, y con el backend SDL lo hace la
+GPU. Además se puede fijar la salida HDMI a la resolución de la sesión,
+lo que elimina el escalado por completo y libera del orden de 260 MiB/s
+de ancho de banda de memoria.
+
+### La aceleración por hardware, descartada de momento
+
+El decodificador H.264 del VPU existe y funciona (`/dev/video10`), pero
+el envoltorio `h264_v4l2m2m` de FFmpeg **está roto en los kernel 6.x** y
+Raspberry Pi OS ya va por el 6.18. La ruta VAAPI de FreeRDP no existe en
+este chip.
+
+Lo tratable sería añadir un subsistema `v4l2m2m` a la capa H.264 de
+FreeRDP, que ya tiene esa abstracción hecha para Android. Queda
+propuesto, no empezado.
+
+Aun así conviene recordar que **RDP con códec progressive cuesta en
+proporción a los píxeles que cambian**, mientras que H.264 descodifica
+fotogramas completos de forma continua. Para trabajo de escritorio, la
+aceleración por hardware podría estar resolviendo un problema que este
+aparato no tiene.
+
+### Y una consecuencia para la Fase B
+
+Como la elección de arquitectura depende de la de descodificación, la
+imagen se publicará **en arm64 y armhf** desde el mismo código, con una
+matriz en GitHub Actions. Cuesta un parámetro y deja la puerta abierta.
 
 ## Flujo de arranque
 

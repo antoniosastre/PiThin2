@@ -12,13 +12,15 @@ conectarse a una nueva y la guarda para la próxima vez.
 
 ## Estado
 
-**Fase A: aprovisionamiento sobre Raspberry Pi OS Lite.** Funciona
-instalando sobre un sistema estándar. La Fase B empaquetará estos
-mismos scripts como imagen `.img.xz` flasheable mediante pi-gen y
-GitHub Actions.
+**Fase A.5: aprovisionamiento sobre Raspberry Pi OS Lite**, con perfiles
+conmutables y sin servidor X. Funciona instalando sobre un sistema
+estándar. La Fase B empaquetará estos mismos scripts como imagen
+`.img.xz` flasheable mediante pi-gen y GitHub Actions.
 
-El razonamiento detrás de este orden, y los límites reales del
-hardware, están en [docs/viabilidad.md](docs/viabilidad.md).
+- Los límites del hardware y el porqué de este orden:
+  [docs/viabilidad.md](docs/viabilidad.md)
+- Arquitectura, sistema de vídeo, escalado y aceleración por hardware:
+  [docs/rendimiento.md](docs/rendimiento.md)
 
 ## Qué necesitas
 
@@ -59,23 +61,52 @@ unidad normal):
 Todo se puede cambiar también desde el menú en pantalla, sin sacar la
 tarjeta.
 
-## Rendimiento
+## Rendimiento y perfiles
 
 La Zero 2 W descodifica el vídeo remoto **por software**: no puede
 acelerar H.264 por hardware. Aun así, RDP solo transmite lo que cambia
 en pantalla, y eso cambia mucho la ecuación.
 
-| Uso | A 1920×1080 |
+| Uso | Experiencia |
 |---|---|
 | Escribir, menús, Office, terminal, código | Fluido |
 | Scroll largo, arrastrar ventanas | Aceptable |
 | Redibujado a pantalla completa | ~5-15 fps |
 | Vídeo y juegos | No es el caso de uso |
 
-Si notas la sesión pesada, baja la resolución a `1280x720` desde
-Ajustes: se transmiten menos de la mitad de píxeles y la imagen se
-escala para seguir llenando la pantalla. Es el ajuste que más se nota,
-sobre todo porque la radio de la Zero 2 W es **solo 2,4 GHz**.
+En vez de exponer los cinco ejes que afectan al rendimiento por
+separado —lo que daría casi doscientas combinaciones imposibles de
+probar— el menú ofrece cuatro **perfiles probados**:
+
+| Perfil | Vídeo | Sesión | Salida HDMI | Quién escala |
+|---|---|---|---|---|
+| **Equilibrado** (defecto) | SDL/KMSDRM | 1280×720 | nativa | GPU |
+| **Máxima nitidez** | SDL/KMSDRM | 1920×1080 | nativa | nadie |
+| **Máxima fluidez** | SDL/KMSDRM | 1280×720 | 720p | el monitor |
+| **Compatibilidad** | X11 | 1920×1080 | nativa | nadie |
+
+Si notas la sesión pesada, prueba *Máxima fluidez*. Es el cambio que más
+se nota, sobre todo porque la radio de la Zero 2 W es **solo 2,4 GHz**.
+
+Los ajustes sueltos siguen en **Ajustes**; al tocar uno, el perfil pasa
+a llamarse *personalizado*.
+
+El razonamiento completo —por qué arm64, por qué sin servidor X, quién
+debe reescalar y por qué no hay aceleración por hardware— está en
+[docs/rendimiento.md](docs/rendimiento.md).
+
+### Sin servidor X
+
+Por defecto se usa `sdl-freerdp3` sobre **SDL3/KMSDRM**: el cliente
+habla directamente con el controlador de pantalla del kernel, sin Xorg
+por medio. Eso ahorra unos 50 MB de RAM y una pieza móvil entera, y
+manda el reescalado a la GPU.
+
+El cliente X11 se instala igualmente como respaldo conmutable desde el
+menú. La primera sesión con un sistema de vídeo nuevo se abre **con
+tiempo limitado** y luego se pregunta si respondía el teclado: el fallo
+típico de KMSDRM es que se vea la imagen pero no funcione la entrada, y
+en ese caso no habría forma de salir de la sesión desde dentro.
 
 ## Seguridad
 
@@ -108,23 +139,36 @@ cambiar el PIN, ver un diagnóstico o apagar.
 ```
 install.sh              Instalador idempotente (Fase A)
 boot-ejemplo/           Plantillas de configuración para la SD
-src/lib/                Módulos: config, cifrado, wifi, vpn, rdp, interfaz
+src/lib/                Módulos: config, perfiles, pantalla, cifrado,
+                        wifi, vpn, rdp, interfaz
 src/bin/                Órdenes: pithin-arranque, pithin-sesion, pithin-menu
 pruebas/                Pruebas de los módulos, sin necesidad de Raspberry
-docs/                   Viabilidad, instalación, Windows y seguridad
+docs/                   Viabilidad, rendimiento, instalación, Windows,
+                        seguridad
 ```
 
 ## Pruebas
 
 ```bash
-./pruebas/prueba-modulos.sh
+./pruebas/todas.sh
 ```
 
-No hace falta root ni una Raspberry: monta un entorno aislado en un
-directorio temporal. Cubre el análisis de los dos ficheros de
-configuración —incluidos los finales de línea de Windows y las
-contraseñas con símbolos raros— y el ciclo completo de cifrado con PIN,
-comprobando que la credencial **no** se descifra desde otro dispositivo.
+135 pruebas más el análisis estático. No hace falta root ni una
+Raspberry: montan un entorno aislado en un directorio temporal, con un
+monitor y una partición de arranque simulados.
+
+Cubren lo que puede romperse en silencio:
+
+- El análisis de los dos ficheros de configuración, incluidos los
+  finales de línea de Windows y las contraseñas con símbolos raros.
+- El ciclo completo de cifrado con PIN, comprobando que la credencial
+  **no** se descifra desde otro dispositivo.
+- La manipulación de `cmdline.txt`, que es el código más peligroso del
+  proyecto: un error ahí deja el equipo sin arrancar. Se verifica que
+  se niega a escribir un `cmdline` sin `root=`, vacío o con saltos de
+  línea, y que **no fuerza un modo de vídeo que el monitor no anuncie**.
+- Perfiles, detección de configuración personalizada y reversión a la
+  última que funcionaba.
 
 Los scripts pasan `shellcheck` sin avisos.
 

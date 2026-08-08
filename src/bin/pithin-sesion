@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# pithin-sesion - bucle de sesión RDP. Corre DENTRO de X, lo lanza
-# xinitrc.
+# pithin-sesion - bucle de sesión RDP.
+#
+# Se ejecuta de dos maneras según el backend:
+#
+#   x11   dentro del servidor X, lanzado por xinitrc.
+#   sdl   directamente desde la consola de texto, sin servidor gráfico
+#         de ningún tipo.
 #
 # La contraseña no se pide aquí: whiptail necesita un terminal de texto
-# y dentro de X no hay ninguno. Se pide antes de arrancar X y llega por
+# y en la sesión gráfica no lo hay. Se pide antes de arrancar y llega por
 # un fichero en tmpfs que esta orden lee y destruye al instante.
 
 set -uo pipefail
@@ -19,27 +24,38 @@ source "$PITHIN_LIB/pithin-rdp.sh"
 source "$PITHIN_LIB/pithin-tui.sh"
 
 MOTIVO="/run/pithin/ultimo-motivo"
+ESTADO="/run/pithin/estado-sesion"
 
-anotar_motivo() {
+anotar() {
     install -d -m 0700 /run/pithin 2>/dev/null || true
     printf '%s' "$1" >"$MOTIVO" 2>/dev/null || true
+    printf '%s' "$2" >"$ESTADO" 2>/dev/null || true
+}
+
+# Ajustes que solo tienen sentido dentro de un servidor X. Con el
+# backend SDL no hay ninguno, y la distribución de teclado la resuelven
+# el keymap de la consola y el /kbd:layout que se le pasa a FreeRDP.
+preparar_x11() {
+    [[ -n "${DISPLAY:-}" ]] || return 0
+    setxkbmap "$TECLADO" 2>/dev/null || true
+    # Nada de salvapantallas: esto es un terminal, no un escritorio.
+    xset s off -dpms s noblank 2>/dev/null || true
 }
 
 main() {
     config_cargar || true
+    preparar_x11
 
-    # La distribución del teclado dentro de X es independiente de la de
-    # la consola de texto.
-    setxkbmap "$TECLADO" 2>/dev/null || true
-
-    # Nada de salvapantallas ni apagado de la pantalla: esto es un
-    # terminal, no un ordenador de escritorio.
-    xset s off -dpms s noblank 2>/dev/null || true
+    # Lo pone lanzar_sesion cuando se estrena un backend: la sesión se
+    # cierra sola para que se pueda comprobar si el teclado responde sin
+    # riesgo de quedarse encerrado en ella.
+    RDP_LIMITE_SEGUNDOS="${PITHIN_LIMITE_SESION:-0}"
+    [[ "$RDP_LIMITE_SEGUNDOS" =~ ^[0-9]+$ ]] || RDP_LIMITE_SEGUNDOS=0
 
     local secreto
     if ! secreto="$(tui_recoger_secreto)"; then
-        log_error "No se recibió la contraseña; se cierra la sesión gráfica."
-        anotar_motivo "No se pudo obtener la contraseña de Windows."
+        log_error "No se recibió la contraseña; se cierra la sesión."
+        anotar "No se pudo obtener la contraseña de Windows." "fallo"
         return 1
     fi
 
@@ -47,9 +63,18 @@ main() {
     while true; do
         codigo=0
         rdp_conectar "$secreto" || codigo=$?
-        anotar_motivo "$RDP_ULTIMO_MOTIVO"
 
-        (( codigo == 0 )) && break
+        if (( RDP_TERMINO_POR_LIMITE )); then
+            anotar "$RDP_ULTIMO_MOTIVO" "limite"
+            break
+        fi
+
+        if (( codigo == 0 )); then
+            anotar "$RDP_ULTIMO_MOTIVO" "ok"
+            break
+        fi
+
+        anotar "$RDP_ULTIMO_MOTIVO" "fallo"
 
         es_si "$RECONEXION_AUTOMATICA" || break
 
@@ -64,9 +89,9 @@ main() {
         intentos=$((intentos + 1))
         if (( RECONEXION_MAX_INTENTOS > 0 && intentos >= RECONEXION_MAX_INTENTOS )); then
             log_aviso "Agotados los $RECONEXION_MAX_INTENTOS reintentos."
-            anotar_motivo "$RDP_ULTIMO_MOTIVO
+            anotar "$RDP_ULTIMO_MOTIVO
 
-Se reintentó $intentos veces sin conseguirlo."
+Se reintentó $intentos veces sin conseguirlo." "fallo"
             break
         fi
 

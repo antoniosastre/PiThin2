@@ -140,16 +140,38 @@ instalar_paquetes() {
     apt-get install -y --no-install-recommends "${PAQUETES_BASE[@]}" \
         || fatal "No se pudieron instalar los paquetes base."
 
+    # Se instalan LOS DOS clientes. El de SDL prescinde del servidor X
+    # y es el que se usa por defecto; el de X11 se queda como red de
+    # seguridad conmutable desde el menú, porque el fallo típico de
+    # SDL/KMSDRM es que la imagen aparezca pero el teclado no responda,
+    # y de eso no se sale desde dentro de la sesión.
+    local clientes=0
+
+    if apt-get install -y --no-install-recommends freerdp3-sdl 2>/dev/null; then
+        ok "Cliente SDL/KMSDRM instalado (sin servidor X)."
+        clientes=$((clientes + 1))
+
+        # libudev1 solo figura como recomendado de libsdl3, y con
+        # --no-install-recommends se quedaría fuera. SDL lo necesita para
+        # detectar teclados y ratones: sin él, la entrada no funciona.
+        apt-get install -y libudev1 >/dev/null 2>&1 || \
+            aviso "No se pudo asegurar libudev1; la entrada por SDL podría no funcionar."
+    else
+        aviso "No hay paquete freerdp3-sdl; se irá solo por X11."
+    fi
+
     # FreeRDP 3 es el que trae /args-from, que usamos para no exponer la
     # contraseña en la línea de órdenes. Si no está disponible caemos a
     # la versión 2, que también funciona.
     if apt-get install -y --no-install-recommends freerdp3-x11 2>/dev/null; then
-        ok "FreeRDP 3 instalado."
+        ok "Cliente X11 instalado (respaldo)."
+        clientes=$((clientes + 1))
     elif apt-get install -y --no-install-recommends freerdp2-x11 2>/dev/null; then
-        aviso "Solo hay FreeRDP 2. Funciona, pero la contraseña será visible en la lista de procesos."
-    else
-        fatal "No se pudo instalar ningún cliente FreeRDP."
+        aviso "Solo hay FreeRDP 2 para X11. Funciona, pero la contraseña será visible en la lista de procesos."
+        clientes=$((clientes + 1))
     fi
+
+    (( clientes > 0 )) || fatal "No se pudo instalar ningún cliente FreeRDP."
 
     # zram: comprime memoria en RAM en vez de tirar de la tarjeta SD.
     # Con 512 MB es el colchón que evita quedarse sin memoria al abrir
@@ -214,15 +236,11 @@ instalar_ficheros() {
     titulo "Copiando PiThin"
 
     install -d -m 0755 "$DESTINO_LIB"
-    install -m 0644 "$RAIZ/src/lib/pithin-common.sh" "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-config.sh" "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-crypto.sh" "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-wifi.sh"   "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-vpn.sh"    "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-rdp.sh"    "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-tui.sh"    "$DESTINO_LIB/"
-    install -m 0644 "$RAIZ/src/lib/pithin-menus.sh"  "$DESTINO_LIB/"
-    install -m 0755 "$RAIZ/src/lib/xinitrc"          "$DESTINO_LIB/"
+    local modulo
+    for modulo in common config pantalla perfiles crypto wifi vpn rdp tui menus; do
+        install -m 0644 "$RAIZ/src/lib/pithin-${modulo}.sh" "$DESTINO_LIB/"
+    done
+    install -m 0755 "$RAIZ/src/lib/xinitrc" "$DESTINO_LIB/"
     ok "Módulos en $DESTINO_LIB"
 
     install -m 0755 "$RAIZ/src/bin/pithin-arranque" "$DESTINO_BIN/"
@@ -446,6 +464,15 @@ desinstalar() {
         ok "config.txt restaurado"
     fi
 
+    # El modo de salida de pantalla se fija en cmdline.txt. Dejarlo
+    # puesto tras desinstalar sería desconcertante.
+    local cmdline="${FICHERO_CONFIG_TXT%/config.txt}/cmdline.txt"
+    if [[ -f "${cmdline}.pithin.bak" ]]; then
+        mv -f "${cmdline}.pithin.bak" "$cmdline"
+        sync
+        ok "cmdline.txt restaurado"
+    fi
+
     aviso "Se conservan la configuración de $DESTINO_BOOT y la credencial de /var/lib/pithin."
     aviso "Bórralos a mano si quieres dejarlo todo limpio."
 
@@ -500,6 +527,18 @@ ${C_TI}=====================================================================${C_
 
   Después:
        sudo reboot
+
+  En el primer arranque:
+
+     · Se usará el sistema de vídeo SDL/KMSDRM, sin servidor X.
+       La primera sesión se abrirá con TIEMPO LIMITADO y después se
+       te preguntará si respondía el teclado. Si no, se vuelve solo
+       a X11. Es la única forma segura de estrenar KMSDRM.
+
+     · Pulsa una tecla en los primeros 3 segundos para entrar al
+       menú en vez de conectar directamente.
+
+     · Si la sesión va pesada: Perfil de sesión -> Máxima fluidez.
 
   Órdenes útiles:
        pithin-menu     abre el menú sin reiniciar

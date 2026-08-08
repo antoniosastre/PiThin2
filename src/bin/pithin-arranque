@@ -30,6 +30,30 @@ FIN
 
 paso() { printf '    %s\n' "$*"; }
 
+# Ventana de cortesía antes de conectar sola. Con AUTOCONECTAR activo
+# es la única forma de llegar al menú sin editar la tarjeta desde otro
+# ordenador.
+#
+# Devuelve 0 si alguien pulsa una tecla.
+ventana_menu() {
+    local segundos="${1:-3}"
+    [[ "$segundos" =~ ^[0-9]+$ ]] || segundos=3
+    (( segundos > 0 )) || return 1
+
+    printf '\n'
+    while (( segundos > 0 )); do
+        printf '\r    Conectando... pulsa una tecla para el menú.   %d ' "$segundos"
+        # Sin nombre de variable: solo interesa si hubo pulsación.
+        if read -r -s -n 1 -t 1; then
+            printf '\r\033[K\n'
+            return 0
+        fi
+        segundos=$((segundos - 1))
+    done
+    printf '\r\033[K'
+    return 1
+}
+
 # ---------------------------------------------------------------------
 
 main() {
@@ -65,9 +89,16 @@ main() {
         paso "Tailscale no está instalado."
     fi
 
+    # --- Aviso de cambios pendientes ----------------------------------
+    if pantalla_requiere_reinicio 2>/dev/null; then
+        paso "Hay un cambio de salida de pantalla pendiente de reiniciar."
+    fi
+
     # --- Sesión -------------------------------------------------------
     if es_si "$AUTOCONECTAR" && config_completa && wifi_conectado; then
-        lanzar_sesion || true
+        if ! ventana_menu "$VENTANA_MENU"; then
+            lanzar_sesion || true
+        fi
     elif ! config_completa; then
         tui_mensaje "Falta configuración" \
 "Todavía no se ha indicado a qué PC hay que conectarse.

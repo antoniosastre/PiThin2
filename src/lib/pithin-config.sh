@@ -11,6 +11,9 @@ PITHIN_CONFIG_CARGADO=1
 
 # shellcheck source=/dev/null
 source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-common.sh"
+# Necesario para avisar de combinaciones que cuestan CPU sin que se note.
+# shellcheck source=/dev/null
+source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-pantalla.sh"
 
 # ---------------------------------------------------------------------
 #  Valores por defecto
@@ -28,7 +31,21 @@ config_defectos() {
     RDP_DOMINIO=""
     RDP_PUERTO="3389"
 
-    RESOLUCION="1920x1080"
+    # Perfil de sesión. Es una macro que fija los cinco ajustes de
+    # abajo; ver pithin-perfiles.sh.
+    PERFIL="equilibrado"
+
+    # Backend gráfico: "sdl" prescinde por completo del servidor X
+    # (SDL3 sobre KMSDRM), "x11" es la ruta clásica, "auto" prefiere sdl
+    # si está disponible y validado.
+    BACKEND="sdl"
+
+    # Quién reescala:
+    #   nativa  la pantalla va a su resolución y se estira la imagen
+    #   sesion  la salida HDMI se fija a la resolución de la sesión
+    SALIDA_HDMI="nativa"
+
+    RESOLUCION="1280x720"
     PROFUNDIDAD_COLOR="32"
     CODEC="progressive"
     MODO_CLIENTE_LIGERO="si"
@@ -48,6 +65,14 @@ config_defectos() {
     ESPERA_TAILSCALE="30"
     GUARDAR_REDES_NUEVAS="si"
 
+    # Segundos que se espera una pulsación antes de conectar sola. Es la
+    # única forma de llegar al menú cuando AUTOCONECTAR está activo.
+    VENTANA_MENU="3"
+
+    # Duración de la sesión de prueba al estrenar un backend. Ver la
+    # explicación en pithin-perfiles.sh.
+    PRUEBA_BACKEND_SEGUNDOS="45"
+
     FREERDP_EXTRA=""
     IGNORAR_CERTIFICADO="si"
 }
@@ -56,10 +81,12 @@ config_defectos() {
 # un aviso: así una errata no se traga en silencio.
 PITHIN_CLAVES_VALIDAS=(
     RDP_HOST RDP_USER RDP_DOMINIO RDP_PUERTO
+    PERFIL BACKEND SALIDA_HDMI
     RESOLUCION PROFUNDIDAD_COLOR CODEC MODO_CLIENTE_LIGERO PERFIL_RED
     PORTAPAPELES SONIDO TECLADO UNIDADES_USB
     AUTOCONECTAR RECONEXION_AUTOMATICA RECONEXION_ESPERA RECONEXION_MAX_INTENTOS
     ESPERA_WIFI ESPERA_TAILSCALE GUARDAR_REDES_NUEVAS
+    VENTANA_MENU PRUEBA_BACKEND_SEGUNDOS
     FREERDP_EXTRA IGNORAR_CERTIFICADO
 )
 
@@ -158,8 +185,33 @@ config_validar() {
         RDP_PUERTO="3389"
     fi
 
-    local numericos=(RECONEXION_ESPERA RECONEXION_MAX_INTENTOS ESPERA_WIFI ESPERA_TAILSCALE)
-    local defectos=(5 10 25 30)
+    case "${BACKEND,,}" in
+        sdl|x11|auto) BACKEND="${BACKEND,,}" ;;
+        *) log_aviso "BACKEND='$BACKEND' no es válido. Se usa sdl."
+           BACKEND="sdl" ;;
+    esac
+
+    case "${SALIDA_HDMI,,}" in
+        nativa|sesion) SALIDA_HDMI="${SALIDA_HDMI,,}" ;;
+        *) log_aviso "SALIDA_HDMI='$SALIDA_HDMI' no es válida. Se usa nativa."
+           SALIDA_HDMI="nativa" ;;
+    esac
+
+    # Combinación que cuesta CPU sin que se note por qué: X11 no sabe
+    # escalar en la GPU, así que estirar la imagen lo hace el procesador
+    # justo mientras descodifica vídeo. Se avisa, no se corrige: puede
+    # ser lo que el usuario quiere.
+    if [[ "$BACKEND" == "x11" && "$SALIDA_HDMI" == "nativa" ]]; then
+        local nativa
+        if nativa="$(pantalla_resolucion_nativa 2>/dev/null)" \
+           && [[ -n "$nativa" && "$nativa" != "$RESOLUCION" ]]; then
+            log_aviso "Con X11, estirar de $RESOLUCION a $nativa lo hace la CPU. Considera el backend sdl o SALIDA_HDMI=\"sesion\"."
+        fi
+    fi
+
+    local numericos=(RECONEXION_ESPERA RECONEXION_MAX_INTENTOS ESPERA_WIFI ESPERA_TAILSCALE
+                     VENTANA_MENU PRUEBA_BACKEND_SEGUNDOS)
+    local defectos=(5 10 25 30 3 45)
     local i
     for i in "${!numericos[@]}"; do
         local nombre="${numericos[$i]}"

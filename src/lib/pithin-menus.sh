@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # pithin-menus.sh - pantallas de la interfaz de texto.
 #
-# Todo lo que no sea "encender y conectar" vive aquí: asistente de
-# redes, ajustes, credenciales, diagnóstico y apagado.
+# Todo lo que no sea "encender y conectar" vive aquí: perfiles, asistente
+# de redes, ajustes, credenciales, diagnóstico y apagado.
 
 [[ -n "${PITHIN_MENUS_CARGADO:-}" ]] && return 0
 PITHIN_MENUS_CARGADO=1
@@ -12,6 +12,10 @@ source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-tui.sh"
 # shellcheck source=/dev/null
 source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-config.sh"
 # shellcheck source=/dev/null
+source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-perfiles.sh"
+# shellcheck source=/dev/null
+source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-pantalla.sh"
+# shellcheck source=/dev/null
 source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-wifi.sh"
 # shellcheck source=/dev/null
 source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-vpn.sh"
@@ -19,6 +23,7 @@ source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-vpn.sh"
 source "${PITHIN_LIB:-/usr/local/lib/pithin}/pithin-rdp.sh"
 
 MOTIVO_ULTIMA_SESION="/run/pithin/ultimo-motivo"
+ESTADO_ULTIMA_SESION="/run/pithin/estado-sesion"
 
 # ---------------------------------------------------------------------
 #  Asistente de redes WiFi
@@ -150,11 +155,11 @@ menu_redes() {
     local eleccion
     while true; do
         eleccion="$(tui_menu "Redes WiFi" \
-"Conexión actual: $(wifi_conectado && wifi_ssid_actual || printf 'ninguna')" 16 72 5 \
-            "conectar"  "Conectarse a una red" \
-            "guardadas" "Ver las redes guardadas en la tarjeta" \
+"Conexión actual: $(wifi_conectado && wifi_ssid_actual || printf 'ninguna')" 16 72 4 \
+            "conectar"   "Conectarse a una red" \
+            "guardadas"  "Ver las redes guardadas en la tarjeta" \
             "reimportar" "Releer redes.conf de la tarjeta" \
-            "estado"    "Ver el estado de la red")" || return 0
+            "estado"     "Ver el estado de la red")" || return 0
 
         case "$eleccion" in
             conectar)  asistente_wifi || true ;;
@@ -176,9 +181,7 @@ _mostrar_redes_guardadas() {
         texto+="  · $ssid   (prioridad $prioridad)"$'\n'
     done < <(wifi_listar_guardadas)
 
-    if [[ -z "$texto" ]]; then
-        texto="No hay ninguna red guardada todavía."
-    fi
+    [[ -n "$texto" ]] || texto="No hay ninguna red guardada todavía."
 
     tui_mensaje "Redes guardadas" \
 "Estas son las redes de $PITHIN_REDES
@@ -202,21 +205,220 @@ IP de Tailscale  $(vpn_ip_propia || printf 'ninguna')" 16 70
 }
 
 # ---------------------------------------------------------------------
+#  Perfiles
+# ---------------------------------------------------------------------
+
+menu_perfiles() {
+    local eleccion actual
+    while true; do
+        actual="$(perfil_detectar)"
+
+        local -a opciones=()
+        local nombre marca
+        for nombre in "${PERFILES_DISPONIBLES[@]}"; do
+            marca=" "
+            [[ "$nombre" == "$actual" ]] && marca="•"
+            opciones+=("$nombre" "$marca $(perfil_titulo "$nombre") — $(perfil_resumen "$nombre")")
+        done
+        opciones+=("__detalle__" "  Ver en qué se diferencian")
+
+        eleccion="$(tui_menu "Perfil de sesión" \
+"Combinaciones probadas de backend, resolución, salida y códec.
+
+Actual: $(perfil_titulo "$actual")" 20 84 6 "${opciones[@]}")" || return 0
+
+        case "$eleccion" in
+            "") return 0 ;;
+            __detalle__) _comparar_perfiles ;;
+            *)
+                if [[ "$eleccion" == "$actual" ]]; then
+                    tui_mensaje "Sin cambios" "Ya estabas usando ese perfil." 9 56
+                    continue
+                fi
+                _aplicar_perfil_interactivo "$eleccion"
+                ;;
+        esac
+    done
+}
+
+_aplicar_perfil_interactivo() {
+    local nombre="$1"
+
+    if ! tui_confirmar "$(perfil_titulo "$nombre")" \
+"$(perfil_detalle "$nombre")
+
+¿Aplicar este perfil?" 22 76 "Aplicar" "Cancelar"; then
+        return 0
+    fi
+
+    if ! perfil_aplicar "$nombre"; then
+        tui_error "No se pudo guardar el perfil en la tarjeta.
+
+Se usará en esta sesión, pero se perderá al reiniciar."
+    fi
+
+    # El modo de salida HDMI se fija en cmdline.txt, así que necesita
+    # reinicio. Se hace ahora y se avisa.
+    _sincronizar_pantalla_si_hace_falta
+}
+
+_comparar_perfiles() {
+    local texto="" nombre
+    texto+=$(printf '%-16s %-5s %-10s %-8s %s\n' "PERFIL" "VÍDEO" "SESIÓN" "SALIDA" "COLOR")$'\n'
+    for nombre in "${PERFILES_DISPONIBLES[@]}"; do
+        texto+=$(printf '%-16s %-5s %-10s %-8s %s\n' \
+            "$(perfil_titulo "$nombre")" \
+            "$(perfil_backend "$nombre")" \
+            "$(perfil_resolucion "$nombre")" \
+            "$(perfil_salida "$nombre")" \
+            "$(perfil_color "$nombre") bits")$'\n'
+    done
+
+    tui_mensaje "Comparativa" \
+"$texto
+SALIDA nativa: la pantalla va a su resolución y estira la imagen.
+SALIDA sesion: la salida HDMI baja a la resolución de la sesión y
+               reescala tu monitor. Gasta menos memoria, pero la
+               calidad depende del monitor.
+
+VÍDEO sdl:     sin servidor X. Más ligero y escala por GPU.
+VÍDEO x11:     la ruta clásica. Red de seguridad." 24 80
+}
+
+# ---------------------------------------------------------------------
+#  Pantalla
+# ---------------------------------------------------------------------
+
+menu_pantalla() {
+    local eleccion nativa forzada
+    while true; do
+        nativa="$(pantalla_resolucion_nativa 2>/dev/null || printf 'desconocida')"
+        forzada="$(pantalla_modo_forzado 2>/dev/null || printf '')"
+
+        eleccion="$(tui_menu "Pantalla" \
+"Monitor detectado: $nativa
+Salida forzada:    ${forzada:-ninguna (se usa la nativa)}
+Sesión remota:     $RESOLUCION" 18 76 4 \
+            "salida"     "Modo de salida ......... $SALIDA_HDMI" \
+            "resolucion" "Resolución de sesión ... $RESOLUCION" \
+            "modos"      "Ver los modos que admite el monitor" \
+            "explicar"   "¿Qué diferencia hay entre las dos salidas?")" || return 0
+
+        case "$eleccion" in
+            salida)     _ajustar_salida_hdmi ;;
+            resolucion) _ajustar_resolucion ;;
+            modos)      _mostrar_modos_monitor ;;
+            explicar)   _explicar_salidas ;;
+            *) return 0 ;;
+        esac
+    done
+}
+
+_ajustar_salida_hdmi() {
+    local eleccion
+    eleccion="$(tui_menu "Modo de salida" \
+"¿Quién reescala la imagen?" 17 78 2 \
+        "nativa" "La pantalla a su resolución, estira la Raspberry" \
+        "sesion" "La salida HDMI baja a $RESOLUCION, reescala el monitor")" || return 0
+    [[ -n "$eleccion" ]] || return 0
+
+    if [[ "$eleccion" == "sesion" ]] && ! pantalla_admite "$RESOLUCION"; then
+        tui_error "El monitor no anuncia el modo $RESOLUCION.
+
+Forzarlo dejaría la pantalla en negro, así que no se hace. Mira los modos que admite en el menú anterior."
+        return 0
+    fi
+
+    config_guardar_ajuste SALIDA_HDMI "$eleccion" || {
+        tui_error "No se pudo guardar el ajuste."
+        return 0
+    }
+    config_validar
+    perfil_resincronizar
+    _sincronizar_pantalla_si_hace_falta
+}
+
+# Aplica el modo de salida a cmdline.txt y ofrece reiniciar. El modo
+# KMS se fija en el arranque del kernel: no hay forma de cambiarlo en
+# caliente sin reiniciar.
+_sincronizar_pantalla_si_hace_falta() {
+    pantalla_requiere_reinicio || return 0
+
+    local resultado=0
+    pantalla_sincronizar || resultado=$?
+
+    case "$resultado" in
+        0) ;;
+        2) tui_error "No se detecta ningún monitor HDMI, así que no se puede fijar el modo."
+           return 0 ;;
+        3) tui_error "El monitor no admite ese modo. No se ha tocado nada para no dejarte sin imagen."
+           return 0 ;;
+        *) tui_error "No se pudo modificar cmdline.txt. ¿Está la tarjeta protegida contra escritura?"
+           return 0 ;;
+    esac
+
+    if tui_confirmar "Hace falta reiniciar" \
+"El modo de salida de pantalla se fija al arrancar el kernel, así que este cambio necesita un reinicio.
+
+¿Reiniciar ahora?" 13 72 "Reiniciar" "Luego"; then
+        clear
+        systemctl reboot
+        exit 0
+    fi
+
+    tui_mensaje "Pendiente" \
+"El cambio se aplicará en el próximo arranque." 9 60
+}
+
+_mostrar_modos_monitor() {
+    local modos
+    modos="$(pantalla_modos_disponibles 2>/dev/null)"
+
+    if [[ -z "$modos" ]]; then
+        tui_mensaje "Modos del monitor" \
+"No se ha podido leer la lista de modos.
+
+¿Está el HDMI conectado?" 11 62
+        return 0
+    fi
+
+    tui_mensaje "Modos del monitor" \
+"Resoluciones que anuncia tu monitor. Solo se puede forzar la salida a una de estas:
+
+$modos" 22 60
+}
+
+_explicar_salidas() {
+    tui_mensaje "Modos de salida" \
+"NATIVA
+La pantalla funciona a su resolución (normalmente 1080p) y la imagen de la sesión se estira para llenarla. Con el backend sdl ese estirado lo hace la GPU y no cuesta nada de CPU.
+
+Es la opción segura: funciona con cualquier monitor.
+
+SESION
+La salida HDMI baja a la misma resolución que la sesión, así que en la Raspberry no se escala nada. Además el controlador de vídeo lee un framebuffer la mitad de grande sesenta veces por segundo, lo que libera bastante ancho de banda de memoria para la CPU.
+
+A cambio reescala tu monitor, y ahí la calidad varía mucho de uno a otro. Algunos televisores además añaden retardo." 24 78
+}
+
+# ---------------------------------------------------------------------
 #  Ajustes
 # ---------------------------------------------------------------------
 
 menu_ajustes() {
     local eleccion
     while true; do
+        # shellcheck disable=SC2153  # variables de configuración, definidas en pithin-config.sh
         eleccion="$(tui_menu "Ajustes" \
-"Destino: ${RDP_HOST:-sin definir}   ·   ${RESOLUCION}   ·   códec $CODEC" 18 76 7 \
-            "host"       "PC de destino .......... ${RDP_HOST:-sin definir}" \
-            "usuario"    "Usuario de Windows ..... ${RDP_USER:-sin definir}" \
-            "resolucion" "Resolución ............. $RESOLUCION" \
-            "codec"      "Códec de vídeo ......... $CODEC" \
-            "teclado"    "Teclado ................ $TECLADO" \
+"Perfil: $(perfil_titulo "$(perfil_detectar)")   ·   $RESOLUCION   ·   $BACKEND" 20 80 8 \
+            "host"        "PC de destino .......... ${RDP_HOST:-sin definir}" \
+            "usuario"     "Usuario de Windows ..... ${RDP_USER:-sin definir}" \
+            "backend"     "Sistema de vídeo ....... $BACKEND" \
+            "codec"       "Códec de vídeo ......... $CODEC" \
+            "color"       "Profundidad de color ... $PROFUNDIDAD_COLOR bits" \
+            "teclado"     "Teclado ................ $TECLADO" \
             "autoconectar" "Conectar al encender ... $AUTOCONECTAR" \
-            "sonido"     "Sonido remoto .......... $SONIDO")" || return 0
+            "sonido"      "Sonido remoto .......... $SONIDO")" || return 0
 
         case "$eleccion" in
             host)       _ajustar_texto RDP_HOST "PC de destino" \
@@ -224,11 +426,12 @@ menu_ajustes() {
             usuario)    _ajustar_texto RDP_USER "Usuario de Windows" \
 "Cuenta local:      Antonio
 Cuenta Microsoft:  MicrosoftAccount\\\\tu@correo.com" ;;
-            resolucion) _ajustar_resolucion ;;
+            backend)    menu_backend ;;
             codec)      _ajustar_codec ;;
+            color)      _ajustar_color ;;
             teclado)    _ajustar_teclado ;;
-            autoconectar) _alternar AUTOCONECTAR "Conectar al encender" ;;
-            sonido)     _alternar SONIDO "Sonido remoto" ;;
+            autoconectar) _alternar AUTOCONECTAR ;;
+            sonido)     _alternar SONIDO ;;
             *) return 0 ;;
         esac
     done
@@ -247,7 +450,7 @@ _ajustar_texto() {
 }
 
 _alternar() {
-    local clave="$1" titulo="$2" nuevo
+    local clave="$1" nuevo
     if es_si "${!clave}"; then nuevo="no"; else nuevo="si"; fi
     config_guardar_ajuste "$clave" "$nuevo" \
         || tui_error "No se pudo guardar el ajuste."
@@ -255,16 +458,22 @@ _alternar() {
 
 _ajustar_resolucion() {
     local eleccion
-    eleccion="$(tui_menu "Resolución" \
-"Es el ajuste que más influye en la fluidez.
+    eleccion="$(tui_menu "Resolución de la sesión" \
+"Cuántos píxeles genera Windows, viajan por el WiFi y hay que descodificar aquí.
 
-Si la sesión va pesada o el WiFi está saturado, baja a 1280x720: se transmiten menos de la mitad de píxeles y la imagen se escala para seguir llenando la pantalla." 19 76 4 \
-        "1920x1080" "Nítido. Recomendado para trabajo de escritorio" \
+Es el ajuste que más influye en la fluidez." 19 78 4 \
+        "1920x1080" "Nítido. Para buen WiFi" \
         "1600x900"  "Punto intermedio" \
-        "1280x720"  "Bastante más fluido. Para WiFi flojo" \
+        "1280x720"  "Bastante más fluido. Recomendado" \
         "1024x768"  "Mínimo. Solo si todo lo demás va mal")" || return 0
     [[ -n "$eleccion" ]] || return 0
+
     config_guardar_ajuste RESOLUCION "$eleccion" && config_validar
+    perfil_resincronizar
+
+    # Si la salida estaba atada a la resolución de sesión, hay que
+    # rehacer cmdline.txt con la nueva.
+    _sincronizar_pantalla_si_hace_falta
 }
 
 _ajustar_codec() {
@@ -279,6 +488,18 @@ Por eso 'progressive' suele ir mejor que 'avc420' aunque comprima peor." 18 78 4
         "auto"        "Que lo negocien Windows y FreeRDP")" || return 0
     [[ -n "$eleccion" ]] || return 0
     config_guardar_ajuste CODEC "$eleccion" && config_validar
+    perfil_resincronizar
+}
+
+_ajustar_color() {
+    local eleccion
+    eleccion="$(tui_menu "Profundidad de color" \
+"16 bits ahorra ancho de banda y algo de CPU, a costa de degradados menos finos." 14 72 2 \
+        "32" "Color completo. Recomendado" \
+        "16" "Ahorra ancho de banda")" || return 0
+    [[ -n "$eleccion" ]] || return 0
+    config_guardar_ajuste PROFUNDIDAD_COLOR "$eleccion" && config_validar
+    perfil_resincronizar
 }
 
 _ajustar_teclado() {
@@ -291,7 +512,43 @@ _ajustar_teclado() {
         "pt"    "Portugués")" || return 0
     [[ -n "$eleccion" ]] || return 0
     config_guardar_ajuste TECLADO "$eleccion" && config_validar
-    setxkbmap "$eleccion" 2>/dev/null || loadkeys "$eleccion" >/dev/null 2>&1 || true
+    loadkeys "$eleccion" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------
+#  Backend gráfico
+# ---------------------------------------------------------------------
+
+menu_backend() {
+    local eleccion disponible_sdl="no" disponible_x11="no"
+    rdp_backend_disponible sdl && disponible_sdl="sí"
+    rdp_backend_disponible x11 && disponible_x11="sí"
+
+    eleccion="$(tui_menu "Sistema de vídeo" \
+"Cómo se dibuja la sesión en la pantalla.
+
+sdl instalado: $disponible_sdl   ·   x11 instalado: $disponible_x11" 19 80 3 \
+        "sdl"  "SDL/KMSDRM — sin servidor X. Más ligero $(backend_validado sdl && printf '(probado)')" \
+        "x11"  "X11 — la ruta clásica $(backend_validado x11 && printf '(probado)')" \
+        "auto" "Elegir solo el que esté disponible")" || return 0
+    [[ -n "$eleccion" ]] || return 0
+
+    if [[ "$eleccion" != "auto" ]] && ! rdp_backend_disponible "$eleccion"; then
+        tui_error "El backend '$eleccion' no está instalado en este equipo.
+
+Vuelve a ejecutar el instalador para añadirlo."
+        return 0
+    fi
+
+    config_guardar_ajuste BACKEND "$eleccion" && config_validar
+    perfil_resincronizar
+
+    if [[ "$eleccion" != "auto" ]] && ! backend_validado "$eleccion"; then
+        tui_mensaje "Se probará al conectar" \
+"La primera sesión con '$eleccion' será una prueba con tiempo limitado.
+
+El fallo típico de este cambio es que la imagen aparezca pero el teclado no responda, y en ese caso no habría forma de salir de la sesión desde dentro. Por eso se cierra sola y luego se te pregunta si funcionaba." 16 76
+    fi
 }
 
 # ---------------------------------------------------------------------
@@ -412,15 +669,25 @@ _diagnostico_completo() {
         fi
     fi
 
-    informe+=$'\n'"PROGRAMAS"$'\n'
-    informe+="  $(rdp_disponible && printf '[ok]' || printf '[--]')  FreeRDP"$'\n'
+    informe+=$'\n'"VÍDEO"$'\n'
+    informe+="  ..... Perfil: $(perfil_titulo "$(perfil_detectar)")"$'\n'
+    informe+="  $(rdp_backend_disponible sdl && printf '[ok]' || printf '[--]')  Cliente SDL   $(backend_validado sdl && printf '(probado)')"$'\n'
+    informe+="  $(rdp_backend_disponible x11 && printf '[ok]' || printf '[--]')  Cliente X11   $(backend_validado x11 && printf '(probado)')"$'\n'
+    informe+="  ..... En uso: $(rdp_backend_efectivo 2>/dev/null || printf 'ninguno')"$'\n'
+
+    informe+=$'\n'"PANTALLA"$'\n'
+    informe+="  ..... Monitor: $(pantalla_resolucion_nativa 2>/dev/null || printf 'no detectado')"$'\n'
+    informe+="  ..... Salida:  $(pantalla_resolucion_efectiva 2>/dev/null || printf '?')  (modo $SALIDA_HDMI)"$'\n'
+    informe+="  ..... Sesión:  $RESOLUCION"$'\n'
+    if pantalla_requiere_reinicio 2>/dev/null; then
+        informe+="  [!!]  Hay un cambio de salida pendiente de reiniciar"$'\n'
+    fi
+
+    informe+=$'\n'"PROGRAMAS Y MEMORIA"$'\n'
     informe+="  $(hay_comando argon2 && printf '[ok]' || printf '[--]')  argon2"$'\n'
-    informe+="  $(hay_comando Xorg && printf '[ok]' || printf '[--]')  Xorg"$'\n'
+    informe+="  $(free -h | awk '/^Mem:/{print "..... total " $2 "  ·  libre " $7}')"$'\n'
 
-    informe+=$'\n'"MEMORIA"$'\n'
-    informe+="  $(free -h | awk '/^Mem:/{print "total " $2 "  ·  libre " $7}')"$'\n'
-
-    tui_mensaje "Diagnóstico" "$informe" 26 76
+    tui_mensaje "Diagnóstico" "$informe" 30 78
 }
 
 _listar_equipos_tailnet() {
@@ -517,45 +784,83 @@ Registro: $PITHIN_LOG" 18 76
 # ---------------------------------------------------------------------
 
 menu_principal() {
-    local eleccion motivo
+    local eleccion
 
     while true; do
-        # Si la sesión anterior terminó mal, lo explicamos una sola vez.
-        if [[ -s "$MOTIVO_ULTIMA_SESION" ]]; then
-            motivo="$(cat "$MOTIVO_ULTIMA_SESION")"
-            rm -f "$MOTIVO_ULTIMA_SESION"
-            tui_mensaje "Se cerró la sesión" "$motivo" 14 74
-        fi
+        _informar_sesion_anterior
 
         eleccion="$(tui_menu "Menú principal" \
 "$(wifi_conectado && printf 'WiFi: %s' "$(wifi_ssid_actual)" || printf 'WiFi: sin conexión')   ·   Tailscale: $(vpn_estado)
-Destino: ${RDP_HOST:-sin definir}" 19 76 6 \
-            "conectar"    "Conectar con mi PC" \
-            "redes"       "Redes WiFi" \
-            "ajustes"     "Ajustes de la conexión" \
+Destino: ${RDP_HOST:-sin definir}   ·   Perfil: $(perfil_titulo "$(perfil_detectar)")" 21 80 7 \
+            "conectar"     "Conectar con mi PC" \
+            "perfil"       "Perfil de sesión" \
+            "pantalla"     "Pantalla y resolución" \
+            "redes"        "Redes WiFi" \
+            "ajustes"      "Ajustes de la conexión" \
             "credenciales" "Contraseña de Windows y PIN" \
-            "diagnostico" "Diagnóstico" \
-            "sistema"     "Sistema")" || { menu_sistema; continue; }
+            "diagnostico"  "Diagnóstico y sistema")" || { menu_sistema; continue; }
 
         case "$eleccion" in
             conectar)     lanzar_sesion || true ;;
+            perfil)       menu_perfiles ;;
+            pantalla)     menu_pantalla ;;
             redes)        menu_redes ;;
             ajustes)      menu_ajustes ;;
             credenciales) menu_credenciales ;;
-            diagnostico)  menu_diagnostico ;;
-            sistema)      menu_sistema ;;
+            diagnostico)  _menu_diagnostico_y_sistema ;;
             "")           menu_sistema ;;
         esac
     done
 }
 
+_menu_diagnostico_y_sistema() {
+    local eleccion
+    eleccion="$(tui_menu "Diagnóstico y sistema" "" 13 62 2 \
+        "diagnostico" "Diagnóstico" \
+        "sistema"     "Consola, reiniciar, apagar")" || return 0
+    case "$eleccion" in
+        diagnostico) menu_diagnostico ;;
+        sistema)     menu_sistema ;;
+    esac
+}
+
+# Explica una sola vez por qué terminó la sesión anterior, y si la
+# configuración es nueva y falló, ofrece volver a la que funcionaba.
+_informar_sesion_anterior() {
+    [[ -s "$MOTIVO_ULTIMA_SESION" ]] || return 0
+
+    local motivo estado
+    motivo="$(cat "$MOTIVO_ULTIMA_SESION")"
+    estado="$(cat "$ESTADO_ULTIMA_SESION" 2>/dev/null || printf 'desconocido')"
+    rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
+
+    if [[ "$estado" == "fallo" ]] && perfil_sin_validar && perfil_hay_bueno; then
+        if tui_confirmar "Se cerró la sesión" \
+"$motivo
+
+Estás usando una configuración que todavía no había funcionado nunca. La última que sí funcionó fue:
+
+  $(perfil_bueno_descripcion)
+
+¿Quieres volver a ella?" 19 76 "Volver a la buena" "Seguir con esta"; then
+            perfil_restaurar_bueno
+            _sincronizar_pantalla_si_hace_falta
+            tui_mensaje "Restaurada" "Se ha vuelto a la configuración anterior." 9 60
+        fi
+        return 0
+    fi
+
+    tui_mensaje "Se cerró la sesión" "$motivo" 14 74
+}
+
 # ---------------------------------------------------------------------
-#  Lanzamiento de la sesión gráfica
+#  Lanzamiento de la sesión
 # ---------------------------------------------------------------------
 
-# Pide el PIN en la consola de texto, arranca X y espera a que la
-# sesión termine. El secreto viaja por un fichero en tmpfs porque
-# whiptail necesita un terminal de verdad y dentro de X no lo hay.
+# Pide el PIN en la consola de texto, arranca el backend elegido y
+# espera a que la sesión termine. El secreto viaja por un fichero en
+# tmpfs porque whiptail necesita un terminal de verdad, y dentro de la
+# sesión gráfica no hay ninguno.
 lanzar_sesion() {
     if ! config_completa; then
         tui_error "Falta por configurar el PC de destino.
@@ -564,8 +869,9 @@ Ve a Ajustes y rellena el nombre del PC y el usuario de Windows."
         return 1
     fi
 
-    if ! rdp_disponible; then
-        tui_error "FreeRDP no está instalado. Vuelve a ejecutar el instalador."
+    local backend
+    if ! backend="$(rdp_backend_efectivo)"; then
+        tui_error "No hay ningún cliente FreeRDP instalado. Vuelve a ejecutar el instalador."
         return 1
     fi
 
@@ -578,16 +884,123 @@ Ve a Ajustes y rellena el nombre del PC y el usuario de Windows."
         fi
     fi
 
+    # Primera vez con este backend: sesión de prueba acotada en el
+    # tiempo. Ver la explicación en pithin-perfiles.sh.
+    local modo_prueba=0
+    if ! backend_validado "$backend"; then
+        if ! tui_confirmar "Primera prueba de '$backend'" \
+"Es la primera vez que se usa el sistema de vídeo '$backend' en este equipo.
+
+La sesión se abrirá durante $PRUEBA_BACKEND_SEGUNDOS segundos y se cerrará sola. Aprovecha para comprobar que el teclado y el ratón responden; después se te preguntará.
+
+Se hace así porque si la entrada no funcionara, no habría forma de salir de la sesión desde dentro." 19 76 "Probar" "Cancelar"; then
+            return 1
+        fi
+        modo_prueba=1
+    fi
+
     tui_preparar_secreto || return 1
 
     clear
-    printf '\n  Conectando con %s...\n\n' "$RDP_HOST"
+    if (( modo_prueba )); then
+        printf '\n  Prueba de %s: %s segundos.\n  Comprueba el teclado y el ratón.\n\n' \
+            "$backend" "$PRUEBA_BACKEND_SEGUNDOS"
+        export PITHIN_LIMITE_SESION="$PRUEBA_BACKEND_SEGUNDOS"
+    else
+        printf '\n  Conectando con %s...\n\n' "$RDP_HOST"
+    fi
 
-    # -keeptty deja los mensajes de X en esta consola en vez de saltar a
-    # otra, lo que hace mucho más fácil ver qué ha fallado.
-    startx "$PITHIN_LIB/xinitrc" -- :0 vt1 -keeptty -nolisten tcp \
-        >/run/pithin/xorg.log 2>&1 || true
+    _arrancar_backend "$backend"
 
+    unset PITHIN_LIMITE_SESION
     tui_olvidar_secreto
+    _restaurar_consola
+
+    if (( modo_prueba )); then
+        _resolver_prueba_backend "$backend"
+    else
+        # Una sesión que termina limpiamente confirma que esta
+        # combinación de ajustes sirve.
+        [[ "$(cat "$ESTADO_ULTIMA_SESION" 2>/dev/null)" == "ok" ]] && perfil_marcar_bueno
+    fi
+
     return 0
+}
+
+_arrancar_backend() {
+    local backend="$1"
+
+    install -d -m 0700 /run/pithin 2>/dev/null || true
+
+    if [[ "$backend" == "x11" ]]; then
+        # -keeptty deja los mensajes de X en esta consola en vez de
+        # saltar a otra, lo que hace mucho más fácil ver qué ha fallado.
+        startx "$PITHIN_LIB/xinitrc" -- :0 vt1 -keeptty -nolisten tcp \
+            >/run/pithin/xorg.log 2>&1 || true
+    else
+        # Sin servidor X: el cliente habla directamente con el
+        # controlador de pantalla del kernel.
+        /usr/local/bin/pithin-sesion >/run/pithin/sdl.log 2>&1 || true
+    fi
+}
+
+# Tras una sesión KMSDRM la consola puede quedar sin repintar.
+_restaurar_consola() {
+    printf '\033[?25h' >/dev/tty 2>/dev/null || true
+    tput reset >/dev/tty 2>/dev/null || clear || true
+}
+
+_resolver_prueba_backend() {
+    local backend="$1"
+
+    # Si el cliente ni siquiera llegó a arrancar, no tiene sentido
+    # preguntar por el teclado.
+    if [[ "$(cat "$ESTADO_ULTIMA_SESION" 2>/dev/null)" == "fallo" ]] \
+       && [[ -s "$MOTIVO_ULTIMA_SESION" ]] \
+       && grep -q "SDL no pudo" "$MOTIVO_ULTIMA_SESION" 2>/dev/null; then
+        backend_invalidar "$backend"
+        tui_error "$(cat "$MOTIVO_ULTIMA_SESION")"
+        rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
+        _revertir_backend "$backend"
+        return 0
+    fi
+
+    if tui_confirmar "¿Funcionaba?" \
+"¿Se veía la imagen y respondían el teclado y el ratón con '$backend'?" 12 70 "Sí, todo bien" "No"; then
+        backend_marcar_validado "$backend"
+        perfil_marcar_bueno
+        rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
+        tui_mensaje "Listo" \
+"'$backend' queda confirmado. Las próximas sesiones ya no tendrán límite de tiempo." 10 66
+        return 0
+    fi
+
+    backend_invalidar "$backend"
+    rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
+    _revertir_backend "$backend"
+}
+
+_revertir_backend() {
+    local fallido="$1" alternativo
+
+    [[ "$fallido" == "sdl" ]] && alternativo="x11" || alternativo="sdl"
+
+    if ! rdp_backend_disponible "$alternativo"; then
+        tui_error "'$fallido' no funciona y no hay ningún otro cliente instalado.
+
+Vuelve a ejecutar el instalador."
+        return 1
+    fi
+
+    if perfil_hay_bueno && ! perfil_sin_validar; then
+        : # la configuración actual ya era buena; no hay nada que revertir
+    fi
+
+    config_guardar_ajuste BACKEND "$alternativo" && config_validar
+    perfil_resincronizar
+
+    tui_mensaje "Cambiado a '$alternativo'" \
+"Se ha vuelto al sistema de vídeo '$alternativo'.
+
+Si quieres volver a intentarlo con '$fallido' más adelante, está en Ajustes → Sistema de vídeo." 13 72
 }

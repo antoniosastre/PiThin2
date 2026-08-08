@@ -244,24 +244,60 @@ tailscale ip -4 TU-PC                 # ¿resuelve?
 nc -vz $(tailscale ip -4 TU-PC) 3389  # ¿responde el puerto?
 ```
 
+### Se ve la imagen pero el teclado no responde
+
+Es el fallo característico de SDL/KMSDRM, y por eso la primera sesión
+con un sistema de vídeo nuevo **se cierra sola a los 45 segundos**: al
+volver a la consola de texto se te pregunta si funcionaba, y si dices
+que no, se vuelve a X11 automáticamente.
+
+Si por lo que sea te has quedado atrapado en una sesión sin teclado:
+espera a que termine, o desconecta la corriente y al arrancar pulsa una
+tecla en los 3 segundos de cortesía para entrar al menú. Desde ahí,
+**Perfil de sesión → Compatibilidad**.
+
+La causa suele ser que falte `libudev1`, que SDL necesita para detectar
+teclados y ratones. El instalador lo fuerza, pero se puede comprobar:
+
+```bash
+dpkg -l libudev1
+ls -l /dev/input/event*
+```
+
 ### Va lento
 
 Por orden de impacto:
 
-1. **Baja la resolución** a `1280x720` desde Ajustes. Es lo que más se
+1. **Perfil de sesión → Máxima fluidez.** Baja la sesión a 720p, fija la
+   salida HDMI a 720p también y usa color de 16 bits. Es lo que más se
    nota, con diferencia.
-2. Comprueba `CODEC="progressive"`. La Zero 2 W no puede acelerar H.264
-   por hardware, así que `avc420` suele ir *peor* aunque comprima mejor.
-3. Pon `PROFUNDIDAD_COLOR="16"`.
+2. Comprueba que el códec es `progressive`. La Zero 2 W no puede acelerar
+   H.264 por hardware, así que `avc420` suele ir *peor* aunque comprima
+   mejor.
+3. Asegúrate de que estás en el sistema de vídeo `sdl` y no en `x11`: con
+   X11 el reescalado lo hace la CPU.
 4. Acércate al router: en 2,4 GHz saturado la señal manda más que todo
    lo demás.
+
+El porqué de cada uno está en [rendimiento.md](rendimiento.md).
+
+### El monitor no acepta 720p
+
+Si eliges *Máxima fluidez* y tu monitor no anuncia el modo 1280×720,
+PiThin **se niega a forzarlo** y te avisa: hacerlo dejaría la pantalla en
+negro. Usa *Equilibrado*, que consigue casi lo mismo dejando la salida a
+la resolución nativa y escalando por GPU.
+
+Puedes ver qué modos admite tu monitor en **Pantalla → Ver los modos que
+admite el monitor**.
 
 ### Ver qué está pasando
 
 ```bash
 tail -f /var/log/pithin.log        # registro de PiThin
 cat /run/pithin/sesion.log         # última sesión de FreeRDP
-cat /run/pithin/xorg.log           # arranque del servidor X
+cat /run/pithin/sdl.log            # backend SDL/KMSDRM
+cat /run/pithin/xorg.log           # backend X11
 ```
 
 ---
