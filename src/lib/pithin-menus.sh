@@ -1023,16 +1023,18 @@ _resolver_prueba_backend() {
 
     # Fallo que NO tiene que ver con el vídeo (PC apagado, contraseña,
     # Tailscale, argumentos): no es culpa del backend. Preguntar "¿se veía la
-    # imagen?" a quien no vio nada y tomar su "No" como que el backend está
-    # roto degradaría el aparato a x11 por una causa ajena. En su lugar se
-    # muestra la causa REAL (que antes se borraba sin enseñarse) y se deja el
-    # backend sin validar para reintentar cuando el problema esté resuelto.
+    # imagen?" y tomar un "No" como que el backend está roto lo degradaría a
+    # x11 por una causa ajena. En su lugar se muestra la causa REAL (que antes
+    # se borraba sin enseñarse) y se deja el backend SIN validar —ni invalidar—
+    # para repetir la prueba cuando el problema esté resuelto. Si la sesión
+    # llegó a mostrarse y cayó luego, no se confirma aún, pero la próxima
+    # prueba con éxito lo confirmará: preferible a degradar por error.
     if [[ "$estado" == "fallo" ]]; then
-        tui_error "La sesión de prueba no llegó a mostrarse, así que todavía no se sabe si «$backend» funciona:
+        tui_error "La sesión de prueba terminó por un problema de conexión, no del vídeo, así que «$backend» queda sin confirmar todavía:
 
 $motivo
 
-Cuando eso esté resuelto, al conectar se volverá a hacer la prueba."
+Cuando eso esté resuelto, al conectar se repetirá la prueba."
         rm -f "$MOTIVO_ULTIMA_SESION" "$ESTADO_ULTIMA_SESION"
         return 0
     fi

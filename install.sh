@@ -430,6 +430,11 @@ aligerar_servicios() {
         if systemctl list-unit-files "$s.service" >/dev/null 2>&1 \
            && systemctl is-enabled "$s" >/dev/null 2>&1; then
             systemctl disable --now "$s" >/dev/null 2>&1 || true
+            # Marca de que lo desactivamos NOSOTROS: así la desinstalación
+            # solo reactiva lo que estaba activo antes, no lo que el usuario
+            # ya tenía apagado.
+            install -d -m 0700 /var/lib/pithin 2>/dev/null || true
+            : >"/var/lib/pithin/.desactivado-$s" 2>/dev/null || true
             ok "$s desactivado"
         fi
     done
@@ -478,11 +483,16 @@ desinstalar() {
         ok "Configuración de zram restaurada"
     fi
 
-    # triggerhappy se había desactivado para ahorrar memoria; se reactiva.
-    if systemctl list-unit-files triggerhappy.service >/dev/null 2>&1; then
-        systemctl enable --now triggerhappy >/dev/null 2>&1 || true
-        ok "triggerhappy reactivado"
-    fi
+    # Reactiva SOLO los servicios que PiThin desactivó (los que dejaron
+    # marca), para no encender uno que el usuario ya tenía apagado antes.
+    local marca svc
+    for marca in /var/lib/pithin/.desactivado-*; do
+        [[ -e "$marca" ]] || continue
+        svc="${marca##*/.desactivado-}"
+        systemctl enable --now "$svc" >/dev/null 2>&1 || true
+        rm -f "$marca"
+        ok "$svc reactivado"
+    done
 
     if [[ -f /root/.bash_profile ]]; then
         sed -i '/# --- PiThin ---/,/# --- fin PiThin ---/d' /root/.bash_profile
