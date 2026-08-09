@@ -50,7 +50,7 @@ Ver [Rendimiento](#rendimiento-y-perfiles).
 
 > ### ⚠️ Estado: sin probar en hardware real
 >
-> El código está completo y con 135 pruebas automáticas en verde, pero
+> El código está completo y con 142 pruebas automáticas en verde, pero
 > **todavía no se ha ejecutado en una Raspberry**. Todo lo verificado se
 > ha verificado en entornos simulados. Espera tener que ajustar cosas en
 > la primera puesta en marcha.
@@ -215,20 +215,26 @@ interfaz usa `whiptail`, que ya viene instalado.
 ./pruebas/todas.sh
 ```
 
-135 pruebas más el análisis estático. No hace falta root ni una
+142 pruebas más el análisis estático. No hace falta root ni una
 Raspberry: montan un entorno aislado en un directorio temporal, con un
 monitor y una partición de arranque simulados.
 
 Cubren lo que puede romperse en silencio:
 
 - El análisis de los dos ficheros de configuración, incluidos los
-  finales de línea de Windows y las contraseñas con símbolos raros.
+  finales de línea de Windows, el BOM del Bloc de notas y las
+  contraseñas con símbolos raros.
+- El escaneo de redes WiFi, comprobando que los nombres de red no se
+  corrompen (SSID con dígitos o con `:`).
 - El ciclo completo de cifrado con PIN, comprobando que la credencial
-  **no** se descifra desde otro dispositivo.
+  **no** se descifra desde otro dispositivo. Necesita `argon2` y
+  `openssl`; si faltan, la suite falla en vez de dar el cifrado por
+  verificado.
 - La manipulación de `cmdline.txt`, que es el código más peligroso del
   proyecto: un error ahí deja el equipo sin arrancar. Se verifica que
   se niega a escribir un `cmdline` sin `root=`, vacío o con saltos de
-  línea, y que **no fuerza un modo de vídeo que el monitor no anuncie**.
+  línea, y que **no fuerza un modo de vídeo que el monitor no anuncie**
+  (ni siquiera uno que solo anuncie entrelazado).
 - Perfiles, detección de configuración personalizada y reversión a la
   última que funcionaba.
 

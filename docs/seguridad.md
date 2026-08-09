@@ -18,7 +18,7 @@ Las tres cosas sensibles que hay dentro:
 | Secreto | Dónde vive | Protección |
 |---|---|---|
 | Contraseñas WiFi | `redes.conf`, partición FAT32 | **Ninguna**, en texto plano |
-| Auth key de Tailscale | `tailscale-authkey.txt`, FAT32 | Se borra tras el primer arranque |
+| Auth key de Tailscale | `tailscale-authkey.txt`, FAT32 | Se borra tras usarla **si la partición es escribible** (si está en solo lectura, queda con un aviso en el log) |
 | Contraseña de Windows | `/var/lib/pithin/`, partición ext4 | Cifrada con Argon2id + PIN + serie del SoC |
 
 ---
@@ -109,12 +109,20 @@ clave = Argon2id(PIN ‖ 0x1F ‖ serie_del_SoC, sal)
 ```
 
 Esto cambia el escenario más probable. Alguien que copie la tarjeta —o
-te la coja prestada un rato— **no tiene el número de serie**, que solo
-existe en el chip de tu Raspberry. Sin él no puede ni empezar a probar
-PINs.
+te la coja prestada un rato— **no tiene el número de serie**. Sin él no
+puede ni empezar a probar PINs.
 
 Para que el ataque offline sea posible hace falta llevarse el aparato
 entero, no solo la tarjeta.
+
+Un matiz honesto: el serie **no es un secreto fuerte**. Lo lee cualquier
+proceso local (`/proc/cpuinfo`), tiene poca entropía y en las Raspberry
+la MAC WiFi —que se difunde en cada red— deriva históricamente de él. No
+sirve como clave por sí solo; su función es concreta: **atar** la
+credencial a *este* aparato, para que la tarjeta copiada a otro equipo no
+abra nada. Para ese escenario —el realista— cumple. Y si el kernel no
+expone el serie, la derivación cae a una constante fija y la credencial
+queda protegida solo por el PIN (se avisa en el log).
 
 ### Refuerzo 3: freno a los intentos en el propio equipo
 
@@ -122,6 +130,12 @@ Contra quien se siente delante del equipo encendido y empiece a probar,
 hay una espera creciente: 5 segundos tras 3 fallos, 30 tras 5, 60 tras
 8. No protege contra el ataque offline —para eso está Argon2id— pero
 hace inviable el método a mano.
+
+Con una salvedad: la espera vive en la **interfaz**, no en el descifrado,
+y el contador es un fichero. Quien llegue a una consola de root (el
+aparato arranca como root) puede borrarlo. Es una barrera contra el
+manoseo casual de quien encuentra el equipo encendido, no contra quien ya
+tiene shell.
 
 ### Cuánto aguanta cada PIN
 
@@ -184,6 +198,15 @@ certificado autofirmado que genera Windows no aporta autenticación
 adicional que sirva de algo. Validarlo solo conseguiría que hubiera que
 aceptarlo a mano en cada arranque.
 
+Ese razonamiento **solo vale dentro del túnel**. Hay dos caminos en los
+que se conecta sin la garantía de WireGuard: si el nombre del PC no
+resuelve en el tailnet (se usa tal cual como destino) o si aceptas
+conectar con Tailscale caído (el menú lo pregunta). En una red hostil,
+con DNS manipulado, ahí `cert:ignore` dejaría hablar NLA/CredSSP con un
+servidor RDP impostor, que podría capturar el desafío-respuesta de tu
+cuenta de Windows. Si vas a usar el aparato en redes en las que no
+confías del todo, considera `IGNORAR_CERTIFICADO="no"`.
+
 Si prefieres validarlo, pon `IGNORAR_CERTIFICADO="no"`: se usa el modo
 *trust on first use*, que acepta el certificado la primera vez y avisa
 si cambia después.
@@ -212,10 +235,23 @@ Merece un apartado porque es fácil filtrar un secreto sin querer:
   key no acabe en el fichero de log.
 - **El fichero de traspaso se destruye al leerlo**, no al terminar la
   sesión.
+- **La auth key de Tailscale tampoco va en la línea de órdenes.** Se pasa
+  a `tailscale up` con `--authkey=file:<ruta>` (fichero `0600` en ext4),
+  no como argumento, por la misma razón que la contraseña.
 
 Si instalas sobre un sistema donde solo hay FreeRDP 2, el instalador
 avisa: esa versión no tiene `/args-from:` y la contraseña sí queda
 visible en la lista de procesos.
+
+**Un límite conocido del cifrado:** la credencial se cifra con
+AES-256-CBC, que da *confidencialidad* pero no *autenticidad*. La marca
+`PITHIN-CRED-1` en claro distingue un PIN equivocado de un fichero
+corrupto, pero **no es un MAC**: quien pueda escribir en la partición
+ext4 podría manipular el fichero cifrado sin que se detecte de forma
+fiable. Para el escenario que de verdad importa aquí —que alguien con la
+tarjeta *lea* tu contraseña— es irrelevante, porque manipular el cifrado
+no revela nada; se documenta por honestidad, no porque abra un ataque
+práctico.
 
 ---
 

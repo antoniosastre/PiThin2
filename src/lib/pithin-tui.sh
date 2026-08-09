@@ -36,7 +36,13 @@ sellistbox=black,white
 '
 
 tui_disponible() {
-    hay_comando whiptail && [[ -t 0 || -e /dev/tty ]]
+    hay_comando whiptail || return 1
+    # /dev/tty existe SIEMPRE como nodo; lo que falla sin terminal de control
+    # es abrirlo (ENXIO). Comprobar '-e /dev/tty' daba un falso positivo: sin
+    # terminal, whiptail moría al instante y todo se interpretaba como
+    # "Cancelar", sin llegar nunca al fallback de texto. Por eso se intenta
+    # ABRIR /dev/tty de verdad.
+    [[ -t 0 ]] || (: </dev/tty) 2>/dev/null
 }
 
 # ---------------------------------------------------------------------
@@ -113,6 +119,23 @@ tui_contrasena() {
 tui_menu() {
     local titulo="$1" texto="$2" alto="$3" ancho="$4" lineas="$5"
     shift 5
+
+    if ! tui_disponible; then
+        # Sin whiptail/terminal no hay menú gráfico. Se listan las etiquetas
+        # y se lee la elección por texto. Sin esto, los bucles de menú del
+        # arranque girarían en vacío tomando cada intento como "Volver".
+        printf '\n== %s ==\n%s\n\n' "$titulo" "$texto" >&2
+        while (( $# >= 2 )); do
+            printf '  %s) %s\n' "$1" "$2" >&2
+            shift 2
+        done
+        local r
+        read -r -p "Elige una opción (Intro para volver): " r || return 1
+        [[ -n "$r" ]] || return 1
+        printf '%s' "$r"
+        return 0
+    fi
+
     # Ver la nota sobre el orden de las redirecciones en tui_entrada.
     # shellcheck disable=SC2069
     whiptail --title "$TUI_TITULO — $titulo" \

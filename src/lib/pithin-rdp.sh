@@ -438,11 +438,15 @@ rdp_conectar() {
 }
 
 # ¿Merece la pena reintentar solo, o hace falta que intervenga alguien?
-# Un fallo de credenciales o de argumentos no se arregla reintentando.
+# Un fallo de credenciales o de argumentos no se arregla reintentando. Y un
+# cierre deliberado (el usuario cerró sesión, u otra conexión tomó el PC)
+# NO es un fallo: reconectar volvería a entrar en Windows en bucle, o pelearía
+# por la sesión con quien acaba de tomarla.
 rdp_fallo_recuperable() {
     (( RDP_TERMINO_POR_LIMITE )) && return 1
     case "$RDP_ULTIMO_MOTIVO" in
-        *"contraseña incorrectos"*|*bloqueada*|*deshabilitada*|*caducado*|*rechazó*|*"SDL no pudo"*)
+        *"contraseña incorrectos"*|*bloqueada*|*deshabilitada*|*caducado*|*rechazó*|*"SDL no pudo"*| \
+        *"Cerraste sesión"*|*"tomado la sesión"*)
             return 1 ;;
         *)  return 0 ;;
     esac

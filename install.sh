@@ -67,7 +67,9 @@ for arg in "$@"; do
         --solo-ficheros) INSTALAR_PAQUETES=0; INSTALAR_TAILSCALE=0; CONFIGURAR_SISTEMA=0 ;;
         --desinstalar)   DESINSTALAR=1 ;;
         -h|--help)
-            sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,2\}//'
+            # 2,20: solo el bloque de comentario de cabecera. Hasta la 22
+            # colaba la línea 'set -euo pipefail' al final de la ayuda.
+            sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,2\}//'
             exit 0 ;;
         *) fatal "Argumento desconocido: $arg (usa --help)" ;;
     esac
@@ -314,7 +316,9 @@ FIN
         cat >>"$perfil" <<FIN
 
 $marca
-if [ "\$(tty)" = "/dev/tty1" ] && [ -x $DESTINO_BIN/pithin-arranque ]; then
+# PITHIN_NO_AUTOARRANQUE lo pone "Abrir una consola de texto" del menú, para
+# que ese shell de login NO vuelva a lanzar PiThin y dé una consola de verdad.
+if [ -z "\$PITHIN_NO_AUTOARRANQUE" ] && [ "\$(tty)" = "/dev/tty1" ] && [ -x $DESTINO_BIN/pithin-arranque ]; then
     $DESTINO_BIN/pithin-arranque
     echo
     echo "PiThin ha terminado. Escribe 'pithin-menu' para volver al menú."
@@ -360,6 +364,10 @@ configurar_memoria() {
     titulo "Ajustando la memoria"
 
     if [[ -f /etc/default/zramswap ]]; then
+        # Copia de seguridad una sola vez, para poder revertir al
+        # desinstalar (el original tiene los valores que trajo la distro).
+        [[ -f /etc/default/zramswap.pithin.bak ]] \
+            || cp -a /etc/default/zramswap /etc/default/zramswap.pithin.bak
         # Con 512 MB, comprimir la mitad de la RAM da un margen real sin
         # penalizar demasiado: zstd descomprime muy rápido incluso en
         # un Cortex-A53.
@@ -422,6 +430,11 @@ aligerar_servicios() {
         if systemctl list-unit-files "$s.service" >/dev/null 2>&1 \
            && systemctl is-enabled "$s" >/dev/null 2>&1; then
             systemctl disable --now "$s" >/dev/null 2>&1 || true
+            # Marca de que lo desactivamos NOSOTROS: así la desinstalación
+            # solo reactiva lo que estaba activo antes, no lo que el usuario
+            # ya tenía apagado.
+            install -d -m 0700 /var/lib/pithin 2>/dev/null || true
+            : >"/var/lib/pithin/.desactivado-$s" 2>/dev/null || true
             ok "$s desactivado"
         fi
     done
@@ -453,6 +466,33 @@ desinstalar() {
     rm -f /etc/tmpfiles.d/pithin.conf
     rm -f /etc/systemd/journald.conf.d/pithin.conf
     ok "Ficheros del programa eliminados"
+
+    # Xwrapper.config lo crea PiThin (allowed_users=anybody, con implicación
+    # de seguridad para Xorg). Se quita solo si lleva nuestra marca, para no
+    # tocar uno que hubiera puesto el usuario.
+    if [[ -f /etc/X11/Xwrapper.config ]] \
+       && grep -qF "Instalado por PiThin" /etc/X11/Xwrapper.config; then
+        rm -f /etc/X11/Xwrapper.config
+        ok "Xwrapper.config eliminado"
+    fi
+
+    # zramswap: se restaura el fichero original que se respaldó al instalar.
+    if [[ -f /etc/default/zramswap.pithin.bak ]]; then
+        mv -f /etc/default/zramswap.pithin.bak /etc/default/zramswap
+        systemctl restart zramswap 2>/dev/null || true
+        ok "Configuración de zram restaurada"
+    fi
+
+    # Reactiva SOLO los servicios que PiThin desactivó (los que dejaron
+    # marca), para no encender uno que el usuario ya tenía apagado antes.
+    local marca svc
+    for marca in /var/lib/pithin/.desactivado-*; do
+        [[ -e "$marca" ]] || continue
+        svc="${marca##*/.desactivado-}"
+        systemctl enable --now "$svc" >/dev/null 2>&1 || true
+        rm -f "$marca"
+        ok "$svc reactivado"
+    done
 
     if [[ -f /root/.bash_profile ]]; then
         sed -i '/# --- PiThin ---/,/# --- fin PiThin ---/d' /root/.bash_profile

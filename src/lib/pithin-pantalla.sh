@@ -83,11 +83,16 @@ pantalla_resolucion_nativa() {
     printf '%s' "${BASH_REMATCH[0]}"
 }
 
-# Todos los modos que anuncia el monitor, uno por línea, sin repetir.
+# Todos los modos PROGRESIVOS que anuncia el monitor, uno por línea, sin
+# repetir. Solo cuentan las líneas que son exactamente 'AnchoxAlto': DRM
+# escribe los modos entrelazados con sufijo 'i' (p. ej. 1920x1080i), y
+# forzar el modo progresivo de una resolución que el monitor solo hace
+# entrelazada da pantalla en negro. Por eso 'grep -x' (línea completa) y no
+# '-oE', que recortaba la 'i' y colaba un modo que el monitor no soporta.
 pantalla_modos_disponibles() {
     local fichero
     fichero="$(_pantalla_fichero_modos)" || return 1
-    grep -oE '^[0-9]+x[0-9]+' "$fichero" 2>/dev/null | awk '!v[$0]++'
+    grep -xE '[0-9]+x[0-9]+' "$fichero" 2>/dev/null | awk '!v[$0]++'
 }
 
 # ¿Admite el monitor esta resolución? Es la comprobación que evita

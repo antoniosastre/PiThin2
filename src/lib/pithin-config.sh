@@ -116,6 +116,9 @@ config_cargar() {
     while IFS= read -r linea || [[ -n "$linea" ]]; do
         n=$((n + 1))
 
+        # El Bloc de notas puede anteponer un BOM UTF-8 a la primera línea;
+        # sin quitarlo, esa línea no casa el patrón y se pierde en silencio.
+        linea="${linea#$'\xef\xbb\xbf'}"
         # Quitamos el retorno de carro que deja Windows al editar.
         linea="${linea%$'\r'}"
         linea="$(recortar "$linea")"
@@ -130,11 +133,16 @@ config_cargar() {
         clave="${BASH_REMATCH[1]^^}"
         valor="$(recortar "${BASH_REMATCH[2]}")"
 
-        # Comillas opcionales alrededor del valor.
-        if [[ "$valor" == \"*\" && ${#valor} -ge 2 ]]; then
-            valor="${valor:1:${#valor}-2}"
-        elif [[ "$valor" == \'*\' && ${#valor} -ge 2 ]]; then
-            valor="${valor:1:${#valor}-2}"
+        # Comillas opcionales alrededor del valor. Si empieza por comilla,
+        # tomamos lo que hay hasta la comilla de cierre y descartamos lo que
+        # venga después (p. ej. un comentario al final de la línea), que si no
+        # se colaba dentro del valor para las claves sin validación.
+        if [[ "$valor" == \"* ]]; then
+            valor="${valor#\"}"
+            valor="${valor%%\"*}"
+        elif [[ "$valor" == \'* ]]; then
+            valor="${valor#\'}"
+            valor="${valor%%\'*}"
         fi
 
         if ! _clave_valida "$clave"; then
@@ -180,9 +188,21 @@ config_validar() {
            PERFIL_RED="wan" ;;
     esac
 
-    if [[ ! "$RDP_PUERTO" =~ ^[0-9]+$ ]] || (( RDP_PUERTO < 1 || RDP_PUERTO > 65535 )); then
+    if [[ ! "$RDP_PUERTO" =~ ^[0-9]+$ ]] || (( 10#$RDP_PUERTO < 1 || 10#$RDP_PUERTO > 65535 )); then
         log_aviso "RDP_PUERTO='$RDP_PUERTO' no es válido. Se usa 3389."
         RDP_PUERTO="3389"
+    else
+        # Normaliza ceros a la izquierda: "08" se interpretaría como octal.
+        RDP_PUERTO="$((10#$RDP_PUERTO))"
+    fi
+
+    # RDP_HOST es un nombre del tailnet o una IP; solo puede llevar letras,
+    # dígitos, puntos y guiones. Se valida porque llega a la comprobación de
+    # puerto con /dev/tcp: un valor con metacaracteres sería una vía de
+    # inyección. Si trae basura, se vacía (mejor caer al menú que arriesgar).
+    if [[ -n "$RDP_HOST" && ! "$RDP_HOST" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        log_aviso "RDP_HOST='$RDP_HOST' contiene caracteres no válidos. Se ignora."
+        RDP_HOST=""
     fi
 
     case "${BACKEND,,}" in
@@ -209,15 +229,29 @@ config_validar() {
         fi
     fi
 
-    local numericos=(RECONEXION_ESPERA RECONEXION_MAX_INTENTOS ESPERA_WIFI ESPERA_TAILSCALE
-                     VENTANA_MENU PRUEBA_BACKEND_SEGUNDOS)
-    local defectos=(5 10 25 30 3 45)
-    local i
-    for i in "${!numericos[@]}"; do
-        local nombre="${numericos[$i]}"
+    # Nombre y defecto juntos en cada entrada: separarlos en dos arrays
+    # paralelos acoplados por índice es la clase de fragilidad que ya mordió
+    # en _wifi_definir_perfil (insertar una clave desplaza en silencio todos
+    # los defectos posteriores).
+    local -a numericos=(
+        "RECONEXION_ESPERA=5"
+        "RECONEXION_MAX_INTENTOS=10"
+        "ESPERA_WIFI=25"
+        "ESPERA_TAILSCALE=30"
+        "VENTANA_MENU=3"
+        "PRUEBA_BACKEND_SEGUNDOS=45"
+    )
+    local par nombre defecto
+    for par in "${numericos[@]}"; do
+        nombre="${par%%=*}"
+        defecto="${par#*=}"
         if [[ ! "${!nombre}" =~ ^[0-9]+$ ]]; then
-            log_aviso "$nombre='${!nombre}' no es un número. Se usa ${defectos[$i]}."
-            printf -v "$nombre" '%s' "${defectos[$i]}"
+            log_aviso "$nombre='${!nombre}' no es un número. Se usa $defecto."
+            printf -v "$nombre" '%s' "$defecto"
+        else
+            # Normaliza ceros a la izquierda: "09" en un (( )) posterior se
+            # tomaría como octal y fallaría ("value too great for base").
+            printf -v "$nombre" '%s' "$((10#${!nombre}))"
         fi
     done
 

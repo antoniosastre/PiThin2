@@ -65,15 +65,25 @@ Windows negociaría por defecto.
 
 ### Presupuesto de RAM estimado (1080p)
 
-| Componente | Estimación |
-|---|---|
-| Raspberry Pi OS Lite en reposo | ~130 MB |
-| Xorg sin gestor de ventanas | ~50 MB |
-| xfreerdp3 con códec progressive | ~90-140 MB |
-| **Total** | **~270-320 MB** |
+Estas cifras son de la primera versión (backend X11). Desde la Fase A.5 el
+backend por defecto es **SDL/KMSDRM sin servidor X**, así que la fila de Xorg
+sobra en el camino normal (se sustituye por el contexto GLES/SDL y los
+búferes de scanout en CMA); a cambio **falta `tailscaled`**, que es un
+demonio permanente durante toda la sesión. Ajustada:
 
-Cabe en 512 MB sin margen para lujos. A 720p baja de forma notable. Se añade
-zram como colchón para los picos.
+| Componente | Estimación (SDL, por defecto) |
+|---|---|
+| Raspberry Pi OS Lite en reposo (arm64) | ~130-200 MB |
+| `tailscaled` (permanente) | ~40-90 MB |
+| Contexto SDL3/KMSDRM (GLES + scanout CMA) | ~20-40 MB |
+| FreeRDP con `progressive` + `small-cache` | ~90-140 MB |
+| **Total (1080p)** | **~280-470 MB** |
+
+Con el backend **x11** hay que sumar Xorg (~40-60 MB) en vez del contexto SDL.
+En el peor caso (perfil *nitidez*, 1080p/32) el margen sobre los ~440-470 MB
+utilizables (tras firmware y CMA de vc4) puede quedar en decenas de MB: **zram
+no es un colchón para lujos, es condición de funcionamiento**. A 720p —el
+perfil por defecto— el margen es cómodo. Son estimaciones, no medidas.
 
 ## El lado Windows
 
@@ -225,7 +235,10 @@ Encendido
                     │            └─► (opcional) guardar para la próxima vez
                     └─► tailscale up
                           └─► ¿Windows accesible en el tailnet?
-                                SÍ ─► startx ─► xfreerdp3 a pantalla completa
+                                SÍ ─► sesión RDP a pantalla completa
+                                │     · sdl  (por defecto): sdl-freerdp3
+                                │            directo sobre KMSDRM, sin X
+                                │     · x11  (respaldo): startx ─► xfreerdp3
                                 │       └─► al salir/caer: menú
                                 NO ─► TUI: diagnóstico + opciones
 ```

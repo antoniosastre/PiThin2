@@ -111,6 +111,15 @@ comprobar "lista todos los modos"        "4"         "$(pantalla_modos_disponibl
 comprobar_ok    "admite un modo anunciado"     pantalla_admite "1280x720"
 comprobar_falla "rechaza un modo no anunciado" pantalla_admite "3840x2160"
 
+# Un modo entrelazado (sufijo 'i') NO debe colarse como progresivo: forzar
+# el progresivo de una resolución que el monitor solo hace entrelazada da
+# pantalla en negro. Es la trampa de recortar 'WxHi' a 'WxH'.
+printf '1920x1080i\n1280x720\n' >"$CONECTOR/modes"
+comprobar_falla "no admite un modo que el monitor solo anuncia entrelazado" \
+    pantalla_admite "1920x1080"
+comprobar_ok    "sí admite el progresivo que sí anuncia" pantalla_admite "1280x720"
+printf '1920x1080\n1680x1050\n1280x720\n1024x768\n' >"$CONECTOR/modes"
+
 # Monitor desconectado: no debe inventarse nada.
 printf 'disconnected\n' >"$CONECTOR/status"
 comprobar_falla "sin monitor no detecta conector" pantalla_conector
@@ -161,8 +170,11 @@ titulo "Salvaguardas"
 
 restaurar_cmdline
 
-comprobar_falla "rechaza una resolución con formato inválido" \
-    pantalla_fijar_modo "muy grande"
+# Se comprueba el código EXACTO (1 = formato inválido), no un "distinto de
+# cero" cualquiera: si no, borrar la validación de formato no rompería la
+# prueba, porque 'muy grande' también lo frenaría pantalla_admite (código 3).
+pantalla_fijar_modo "muy grande" >/dev/null 2>&1
+comprobar "rechaza una resolución con formato inválido (código 1)" "1" "$?"
 comprobar "tras rechazarla no ha tocado nada" "$CMDLINE_ORIGINAL" \
     "$(cat "$PANTALLA_CMDLINE")"
 
@@ -289,9 +301,14 @@ perfil_marcar_bueno
 comprobar_ok    "queda guardado como bueno" perfil_hay_bueno
 comprobar_falla "y la configuración actual ya está validada" perfil_sin_validar
 
-perfil_aplicar fluidez >/dev/null 2>&1
+# Se usa 'nitidez' (1080p) como intermedio a propósito: 'equilibrado' y
+# 'fluidez' comparten resolución (720p), así que con fluidez la aserción de
+# resolución de abajo pasaría aunque restaurar no escribiera nada. Con
+# nitidez, la resolución sí tiene que cambiar de 1080p a 720p al restaurar.
+perfil_aplicar nitidez >/dev/null 2>&1
 config_cargar "$PITHIN_CONF" >/dev/null 2>&1
 comprobar_ok "cambiar de perfil lo deja sin validar" perfil_sin_validar
+comprobar "el intermedio cambió de verdad la resolución" "1920x1080" "$RESOLUCION"
 
 perfil_restaurar_bueno >/dev/null 2>&1
 config_cargar "$PITHIN_CONF" >/dev/null 2>&1
