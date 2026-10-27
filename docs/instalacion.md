@@ -1,7 +1,8 @@
 # Instalación paso a paso
 
 Instrucciones de la **Fase A**: aprovisionar una Raspberry Pi OS Lite
-estándar. La Fase B producirá una imagen ya lista para flashear.
+estándar. La imagen lista para grabar es un trabajo pendiente. El dispositivo físico,
+la sesión remota y los periféricos todavía requieren validación.
 
 Antes de empezar, o en paralelo, prepara el PC con Windows siguiendo
 [windows.md](windows.md).
@@ -59,7 +60,7 @@ Mete la tarjeta, conecta la alimentación y espera un minuto. Desde otro
 ordenador de la misma red:
 
 ```bash
-ssh pi@pithin.local
+ssh usuario@pithin.local
 ```
 
 Si `pithin.local` no resuelve, busca la IP en el router o prueba con
@@ -75,6 +76,7 @@ sudo reboot
 Vuelve a entrar por SSH e instala PiThin:
 
 ```bash
+sudo apt install -y git
 git clone https://github.com/antoniosastre/PiThin2.git
 cd PiThin2
 sudo ./install.sh
@@ -108,7 +110,7 @@ sudo nano /boot/firmware/pithin/pithin.conf
 Lo mínimo imprescindible son dos líneas:
 
 ```ini
-RDP_HOST="sobremesa-antonio"
+RDP_HOST="pc-remoto"
 RDP_USER="MicrosoftAccount\\tu@correo.com"
 ```
 
@@ -152,8 +154,8 @@ generarla con la etiqueta correcta):
 sudo nano /boot/firmware/pithin/tailscale-authkey.txt
 ```
 
-Pega la clave `tskey-auth-...` y guarda. Se usará en el próximo arranque
-y el fichero se borrará solo.
+Pega la clave `tskey-auth-...` y guarda. Se procesará en el próximo arranque.
+Comprueba su retirada: si la partición está en solo lectura, no se puede borrar.
 
 O autentica ahora mismo a mano:
 
@@ -310,6 +312,7 @@ sudo ./install.sh --desinstalar
 sudo reboot
 ```
 
-Deja el sistema como estaba. Conserva tu configuración de
+Revierte los ajustes previstos por el instalador, sin retirar los paquetes
+instalados. Conserva tu configuración de
 `/boot/firmware/pithin/` y la credencial cifrada de `/var/lib/pithin/`
 por si quieres reinstalar; bórralas a mano si quieres dejarlo limpio.

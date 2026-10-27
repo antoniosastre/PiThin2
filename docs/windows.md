@@ -54,7 +54,7 @@ el equipo.
 
 Ese panel te da el dato que va en `pithin.conf`:
 
-- El **nombre** de la máquina (por ejemplo `sobremesa-antonio`), o
+- El **nombre** de la máquina (por ejemplo `pc-remoto`), o
 - Su **IP** `100.x.y.z`
 
 Cualquiera de los dos vale como `RDP_HOST`.
@@ -201,9 +201,9 @@ credenciales que despista bastante:
 
 | Tipo de cuenta | `RDP_USER` |
 |---|---|
-| Cuenta local de Windows | `Antonio` |
+| Cuenta local de Windows | `usuario` |
 | Cuenta Microsoft | `MicrosoftAccount\\tu@correo.com` |
-| Equipo en dominio | `Antonio` y además `RDP_DOMINIO="MIEMPRESA"` |
+| Equipo en dominio | `usuario` y además `RDP_DOMINIO="MIEMPRESA"` |
 
 Las **dos barras invertidas** en el caso de cuenta Microsoft son
 necesarias: el fichero se lee como texto y una sola barra se
